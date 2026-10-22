@@ -80,6 +80,50 @@ solved the analogous problem by deriving a per-record key from a per-record
 salt; the compact record should do the same, so the number of records one DEK
 may seal is not capped by a birthday bound.
 
+## Two API shapes, and the ceiling on the non-streaming one
+
+Owner's requirement, 2026-10-23: streaming **and** non-streaming, the
+non-streaming one with a maximum byte size.
+
+Worth separating two axes that are easy to conflate:
+
+- **Format** is chosen by whether ranged reads are needed: *framed* (CASF1) for
+  blobs and anything read by range; *compact record* for a whole small value.
+- **API shape** is chosen by where the bytes are: *streaming* (`io.Writer` /
+  `io.Reader` / `io.ReaderAt` for ranges) or *one-shot* (`[]byte` in, `[]byte`
+  out). Both shapes are offered over the compact format; the framed format is
+  streaming-first, with a bounded one-shot convenience over it.
+
+**Every one-shot entry point carries an explicit ceiling, and the ceiling is a
+security control rather than a courtesy.** Five rules it must follow:
+
+1. **Two separate limits, not one.** A plaintext ceiling on the encrypt side
+   bounds what a caller may hand us. A *ciphertext* ceiling on the decrypt side
+   is the one that matters, because an attacker controls the ciphertext's
+   length.
+2. **Checked before allocation**, from the declared or derivable length — never
+   by reading and discovering. This is the allocation-bomb pattern, and CASF1
+   already applies the same reasoning to `frame_size`, whose bounds exist
+   "purely to bound decoder resource use" and authenticate nothing. Two
+   mechanisms, kept distinct.
+3. **Fail closed on an unknown length.** If a limit is configured and the input
+   length cannot be established up front, the operation is refused. This is
+   deliberately the same rule as CAS §9.2's `MaxContentLength` caveat, which
+   "fails closed on an unknown length: a chunked upload with no declared size
+   is refused when a limit caveat exists."
+4. **A typed error naming the limit**, never a truncated or partial result. A
+   partial plaintext from a bounded decrypt is worse than a refusal.
+5. **Streaming is not exempt from bounding.** A caller streaming into a buffer
+   has exactly the same exposure, so the reader takes an optional total
+   plaintext ceiling. Streaming bounds *our* memory to one frame; it does not
+   bound the caller's.
+
+**Default ceiling (open to revision):** 1 MiB for the compact record, chosen so
+a compact record never exceeds what a single CASF1 frame would hold — which
+keeps one invariant across both formats and makes the choice between them a
+question about ranged reads rather than about size. Configurable upward
+explicitly; a deployment that raises it has said so.
+
 ## Adoption
 
 | Consumer | State |
