@@ -592,6 +592,14 @@ single framed frame would hold — which keeps one invariant across both formats
 and makes the choice between them a question about **ranged reads** rather than
 about size. It is open to revision; the reasoning is the part worth keeping.
 
+**Both ceilings are enforced on decrypt**, each on the thing it names: the
+ciphertext ceiling against the input's length, and the plaintext ceiling
+against the length the input declares by being as long as it is. The derived
+default normally makes the two agree, so the difference only shows when a
+caller opts one of them out by hand — and reading `MaxCiphertext: Unlimited`
+with a `MaxPlaintext` still in place as "no bound on either" would be the
+surprising answer rather than the safe one.
+
 `MaxCiphertext`, left zero, is derived from `MaxPlaintext` plus the format's
 overhead, so a caller that raises one ceiling is not left unable to read back
 what it just wrote. The derivation differs per format — a flat 33 bytes for the

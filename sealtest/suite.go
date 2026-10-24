@@ -336,6 +336,18 @@ func RunStreamSealerSuite(t *testing.T, newSealer func(t *testing.T) seal.Stream
 		assertLimitRefusal(t, "DecryptObject", "max ciphertext", 1024, err, out)
 	})
 
+	t.Run("EnforcesThePlaintextCeilingOnDecryptToo", func(t *testing.T) {
+		s := newSealer(t)
+		dek, addr := streamFixture(t)
+		ciphertext := mustEncryptObject(t, s, dek, addr, patterned(4096))
+
+		out, err := s.DecryptObject(dek, addr, ciphertext, seal.Limits{
+			MaxPlaintext:  1024,
+			MaxCiphertext: seal.Unlimited,
+		})
+		assertLimitRefusal(t, "DecryptObject", "max plaintext", 1024, err, out)
+	})
+
 	// CHARTER.md's fifth ceiling rule. Streaming bounds the implementation's
 	// memory to one frame; it does not bound the caller's, so the reader takes
 	// a total plaintext ceiling — and a zero is refused rather than quietly
@@ -571,6 +583,26 @@ func RunRecordSealerSuite(t *testing.T, newSealer func(t *testing.T) seal.Record
 			MaxCiphertext: 1024,
 		})
 		assertLimitRefusal(t, "DecryptRecord", "max ciphertext", 1024, err, out)
+	})
+
+	// The asymmetry a caller can create by hand and would not expect to be a
+	// hole: MaxCiphertext opted out explicitly, with MaxPlaintext left in
+	// place. The derived default normally makes the two agree, so this only
+	// arises deliberately — and reading it as "no bound on either" would be
+	// the surprising answer rather than the safe one.
+	t.Run("EnforcesThePlaintextCeilingOnDecryptToo", func(t *testing.T) {
+		s := newSealer(t)
+		dek, addr := recordFixture(t)
+		record, err := s.EncryptRecord(dek, addr, patterned(4096), seal.Limits{MaxPlaintext: seal.Unlimited})
+		if err != nil {
+			t.Fatalf("EncryptRecord: %v", err)
+		}
+
+		out, err := s.DecryptRecord(dek, addr, record, seal.Limits{
+			MaxPlaintext:  1024,
+			MaxCiphertext: seal.Unlimited,
+		})
+		assertLimitRefusal(t, "DecryptRecord", "max plaintext", 1024, err, out)
 	})
 
 	t.Run("RefusesANonsensicalCeiling", func(t *testing.T) {

@@ -184,6 +184,16 @@ func Open(
 	if len(record) < domain.CompactOverhead {
 		return nil, domain.ErrCorrupt
 	}
+	// And the plaintext ceiling, against the length the record declares by
+	// being as long as it is. The ciphertext ceiling is the one that matters,
+	// and by default it is derived from this one so the two agree — but a
+	// caller that set MaxCiphertext to Unlimited explicitly while leaving
+	// MaxPlaintext in place has said something specific, and reading that as
+	// "no bound on either" would be the surprising answer rather than the
+	// safe one. Both ceilings are enforced, each on the thing it names.
+	if err := limits.CheckPlaintext(int64(len(record) - domain.CompactOverhead)); err != nil {
+		return nil, err
+	}
 	if record[0] != byte(domain.VersionCompact) {
 		return nil, domain.ErrCorrupt
 	}

@@ -643,3 +643,39 @@ func assertRedacted(t *testing.T, name string, subject any, sentinel string) {
 		}
 	}
 }
+
+// TestOpen_EnforcesThePlaintextCeilingToo covers the asymmetry a caller can
+// create and would not expect to be a hole: MaxCiphertext set to Unlimited
+// explicitly, with MaxPlaintext left in place.
+//
+// The derived default makes the two ceilings agree, so this only arises when
+// someone opts one of them out by hand — and reading that as "no bound on
+// either" would be the surprising answer rather than the safe one.
+func TestOpen_EnforcesThePlaintextCeilingToo(t *testing.T) {
+	dek := testDEK(t)
+	addr := testAddress(t, "graph-1", "fact-1", "salary")
+
+	record, err := compact.Seal(dek, addr, make([]byte, 4096), unlimited(t))
+	if err != nil {
+		t.Fatalf("Seal: %v", err)
+	}
+
+	limits, err := domain.Limits{MaxPlaintext: 1024, MaxCiphertext: domain.Unlimited}.ResolveCompact()
+	if err != nil {
+		t.Fatalf("ResolveCompact: %v", err)
+	}
+	plain, err := compact.Open(dek, addr, record, limits)
+	if !errors.Is(err, domain.ErrLimitExceeded) {
+		t.Fatalf("Open of a 4096-byte value under a 1024-byte plaintext ceiling: err = %v, want ErrLimitExceeded", err)
+	}
+	if plain != nil {
+		t.Error("a refused Open returned plaintext")
+	}
+	var limitErr *domain.LimitError
+	if !errors.As(err, &limitErr) || limitErr.Limit != "max plaintext" {
+		t.Fatalf("err = %v, want a *LimitError naming max plaintext", err)
+	}
+	if limitErr.Actual != 4096 {
+		t.Errorf("LimitError.Actual = %d, want the 4096 bytes the record declares", limitErr.Actual)
+	}
+}
