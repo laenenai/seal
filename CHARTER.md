@@ -50,8 +50,37 @@ found:
   the same tenant.
 
 Per the project's extraction rule: take the most advanced consumer's working
-code, never design fresh. Sequenced **after CAS's ~2026-11-05 alpha**, with CAS
-keeping its copy until the swap.
+code, never design fresh.
+
+**Done, 2026-10-24.** CASF1 is `internal/framed`, and CAS's
+`testdata/vectors.json` came across byte for byte —
+`TestVectors_MatchCommittedTestdata` decrypts CAS's committed ciphertext under
+this module's code, which is the evidence that this was an extraction and not a
+rewrite that happens to pass its own tests. All of CAS's tests are ported under
+their own names. CAS keeps its copy until it swaps, and
+`sealtest.RunStreamSealerSuite` is what it can run against that copy in the
+meantime.
+
+The earlier sequencing note here — "after CAS's ~2026-11-05 alpha" — is stale
+and is removed rather than left to be believed: the owner reordered to implement
+every module before returning to CAS, which made `seal` the thing blocking CAS's
+step 4 rather than something waiting on it.
+
+### What the format family is called
+
+The family is **SEAL**, with one numbered version space across both shapes:
+version 1 is the framed stream, version 2 the compact record, and the next
+change to either takes the next number rather than starting a second counter.
+
+The framed format's five wire magic bytes still spell `CASF1`. That is
+deliberate, and `docs/format.md` argues it at length: renaming the magic changes
+every frame's AAD, which changes every committed tag, which means regenerating
+the vectors — and the vectors are the only thing stopping the format document
+and the code drifting silently. There is no shared ASCII prefix across the two
+shapes, for that reason on one side and for the sake of a third of the compact
+record's overhead on the other; what a shared prefix would have bought is bought
+instead by binding each version number into its own AAD, which costs nothing on
+the wire because AAD is authenticated rather than stored.
 
 ## The shape CASF1 does not have
 
@@ -126,11 +155,28 @@ explicitly; a deployment that raises it has said so.
 
 ## Adoption
 
+Revised 2026-10-24. The previous version of this section sequenced the
+extraction after CAS's ~2026-11-05 alpha; the owner reordered to implement every
+module before returning to CAS, so the dependency now runs the other way. **This
+module is what blocks CAS's adoption plan at step 4.** Nothing here is waiting
+on CAS's milestone.
+
 | Consumer | State |
 |---|---|
-| cas | extraction pending (post-alpha) — `internal/crypto`, CASF1, ~1,740 lines including spec and tests |
-| kgs | pending — the compact record shape is what its per-attribute encryption needs |
+| cas | **unblocked, swap pending** — CAS's `internal/crypto` is now `seal`'s `internal/framed`, and CAS's committed vectors decrypt here unchanged. CAS's step 4 is to delete its copy (~1,740 lines including spec and tests) and import this module. `sealtest.RunStreamSealerSuite` runs against CAS's existing implementation, which is what makes the swap a verified substitution rather than a rewrite. |
+| kgs | **unblocked** — the compact record (format version 2) is implemented, with the `(graph, fact id, attribute)` binding its per-attribute encryption needs (its design §23.1, leak channel #17). |
 | acre | not expected |
+
+### What is not done
+
+- **No release.** There is no tag; a consumer pins a commit until there is one.
+- **No external review.** The compact record is new code in a module whose
+  whole subject is cryptographic construction, and it has had none. The framed
+  format has CAS's review history behind it; version 2 has only this module's
+  tests.
+- **No consumer has run the suite yet.** Both ports pass against this module's
+  own implementations. "Adopted" is testable and has not yet been tested by
+  anyone but us.
 
 ## Provenance
 
