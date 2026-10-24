@@ -5,8 +5,12 @@ package framed_test
 // found and a renamed test is a test nobody can trace back to its bug. What
 // changed is mechanical: package and identifier names, a keyring.DEK where a
 // []byte used to be, an ObjectAddress where a struct literal used to be, and
-// the stream reader's new plaintext ceiling passed as seal.Unlimited so the
+// the stream reader's new plaintext ceiling passed as domain.Unlimited so the
 // ported assertions mean exactly what they meant in CAS.
+//
+// The properties are CAS's; the wire format is not. The magic and the HKDF
+// info string were renamed on extraction, so every assertion below holds of
+// SEAL1 ciphertext this package produced and none of it holds of CAS's bytes.
 //
 // Three tests gained something and one lost something, each noted at the test:
 //
@@ -405,13 +409,16 @@ func TestDecryptReader_PartialReadOfCleanObject_CloseReturnsNil(t *testing.T) {
 	}
 }
 
-// TestVectors_MatchCommittedTestdata is the test that makes this an
-// extraction. Every byte of testdata/vectors.json came across from
-// cas/internal/crypto/testdata/vectors.json unchanged, and this test decrypts
-// each entry's committed ciphertext directly: CAS's ciphertext, CAS's DEK,
-// CAS's tenant and content address, decrypted by this module's code. If it
-// ever fails, the wire format has changed, and the answer is to change it back
-// — not to refresh the vector.
+// TestVectors_MatchCommittedTestdata decrypts the committed ciphertext
+// directly, which is the only mechanism that stops docs/format.md and this
+// package drifting apart.
+//
+// The fixture is NOT cas/internal/crypto's bytes: the magic and the HKDF info
+// string were renamed from CASF1 to SEAL1 on extraction, which changes the
+// frame key and every tag, so CAS's ciphertext does not decrypt here. It was
+// regenerated once for that rename, by gen_vectors_test.go, and must not be
+// regenerated again casually. If it ever fails, the wire format has changed and
+// the answer is to change it back — not to refresh the vector.
 func TestVectors_MatchCommittedTestdata(t *testing.T) {
 	raw, err := os.ReadFile("testdata/vectors.json")
 	if err != nil {
@@ -463,10 +470,10 @@ func TestVectors_MatchCommittedTestdata(t *testing.T) {
 			}
 
 			// The object component is the content address's canonical
-			// "<algo>:<hex>" form, which is the string CAS bound into every
-			// frame's AAD. The vector's content_address is stored as its two
-			// parts so the fixture records what CAS's domain type held, not
-			// just the concatenation.
+			// "<algo>:<hex>" form, which is what a consumer addressing a blob
+			// by digest passes. The fixture stores it as its two parts rather
+			// than as the concatenation so that what a caller holds, and what
+			// the AAD binds, are both visible.
 			addr, err := domain.NewObjectAddress(vec.Tenant, vec.Address.Algo+":"+vec.Address.Hex)
 			if err != nil {
 				t.Fatalf("NewObjectAddress: %v", err)

@@ -11,13 +11,21 @@ belongs — so a value cannot be spliced or relocated and still decrypt.
 > review.**
 >
 > **In, and tested:** the framed stream (format version 1), extracted from
-> `cas/internal/crypto` with CAS's committed test vectors carried across byte
-> for byte — CAS's ciphertext decrypts here unchanged, which is the evidence
-> that this is an extraction and not a rewrite; the compact record (format
-> version 2), new, with its own committed vectors; both API shapes over both
-> formats; the five size-ceiling rules, each with a named subtest; two ports
-> behind conformance suites in `sealtest`; the rendering discipline on every
-> value the module hands back.
+> `cas/internal/crypto` — all 24 of its property tests ported under their own
+> names, with committed vectors that pin the format against future drift; the
+> compact record (format version 2), new, with its own committed vectors; both
+> API shapes over both formats; the five size-ceiling rules, each with a named
+> subtest; two ports behind conformance suites in `sealtest`; the rendering
+> discipline on every value the module hands back.
+>
+> **Not wire-compatible with `cas/internal/crypto`, deliberately.** CAS's magic
+> and HKDF info string were `CASF1`; both are renamed to `SEAL1` here, which
+> changes the frame key and every tag. Ciphertext CAS wrote does not decrypt
+> under `seal` and there is no compatibility shim. Nothing had ever been
+> persisted — CAS is unreleased, untagged, with no deployment and no stored
+> blobs — so there was no data to be compatible with, and no reason to carry
+> another module's spelling forever. CAS keeps its own copy until it swaps, at
+> which point it still has nothing stored.
 >
 > **Deliberately out of scope in this pass**, each noted here rather than left
 > to be discovered:
@@ -66,9 +74,9 @@ chosen by where the bytes are.
 
 Both versions live in **one numbered space**, and each version is bound into
 its own AAD, so a ciphertext written under one can never be opened as another.
-The framed format's five wire magic bytes still spell `CASF1`:
-[`docs/format.md`](docs/format.md) argues why renaming them would have cost the
-one property the committed vectors exist to provide.
+Every identifier says the same number: the framed stream's magic is `SEAL1` and
+its HKDF info `"SEAL1 frame key"`; the compact record's wire byte is `2` and its
+HKDF info `"SEAL2 record key"`.
 
 It detects truncation of the final frame, reordering, and any bit flip
 **including in the header** — achieved by binding the whole 25-byte header into

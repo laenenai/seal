@@ -34,10 +34,16 @@
 //     object) pair.
 //
 // Both versions live in one numbered space rather than one counter per shape,
-// and each version is bound into its own AAD, so a ciphertext written under
-// one can never be opened as another. The framed format's wire magic still
-// spells CASF1, which is where it was extracted from; docs/format.md says why
-// that was the right trade.
+// and each version is bound into its own AAD, so a ciphertext written under one
+// can never be opened as another. The identifiers say the same number the
+// registry does: the framed stream's magic is "SEAL1", the compact record's
+// wire discriminator is the byte 2, and their HKDF info strings are
+// "SEAL1 frame key" and "SEAL2 record key".
+//
+// The framed format is an extraction of cas/internal/crypto and its wire format
+// is deliberately not compatible with it: CAS's magic and info string were
+// CASF1, both are renamed here, and there is no shim. Nothing had ever been
+// persisted, so there was nothing to be compatible with. See docs/format.md.
 //
 // # The size ceilings are security controls
 //

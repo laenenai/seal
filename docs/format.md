@@ -13,7 +13,7 @@ property away and kept the file.
 ## Contents
 
 - [Version registry](#version-registry)
-- [Naming, and why the framed format's magic still says CASF1](#naming-and-why-the-framed-formats-magic-still-says-casf1)
+- [Not wire-compatible with `cas/internal/crypto`](#not-wire-compatible-with-casinternalcrypto)
 - [Format version 1 — the framed stream](#format-version-1--the-framed-stream)
 - [Format version 2 — the compact record](#format-version-2--the-compact-record)
 - [Key and nonce management at scale](#key-and-nonce-management-at-scale)
@@ -31,63 +31,81 @@ next change to either shape takes the next number here.
 
 | Version | Shape | Wire discriminator | What its AAD begins with |
 |---|---|---|---|
-| **1** | framed stream | the 5-byte magic `CASF1` at the head of the 25-byte header | the whole 25-byte header |
+| **1** | framed stream | the 5-byte magic `SEAL1` at the head of the 25-byte header | the whole 25-byte header |
 | **2** | compact record | a single leading byte holding `0x02` | the whole 17-byte prefix (version byte + salt) |
 
 The cost of one space is that the numbers no longer read as "revision 1 of the
 framed format". What it buys is that a version number is unambiguous on its
 own, which is what matters when it is the thing bound into an AEAD tag and the
 thing a stored row records. A future reframing of the framed format is **version
-3**, not "CASF2"; a change to the compact record is **version 4**.
+3**; a change to the compact record is **version 4**.
 
-### There is no shared magic prefix, and that is a decision
+Every identifier says the same number this table does — the framed stream's
+magic is `SEAL1` and its HKDF info `"SEAL1 frame key"`; the compact record's
+wire byte is `2` and its HKDF info `"SEAL2 record key"` — so there is nothing to
+keep in step, and a version read off the wire, off a stored column, or out of a
+key derivation is the same number spelled the same way.
 
-A shared ASCII prefix across both formats was considered and is not here.
+### There is no shared *stored* prefix, and that is a decision
 
-- Adding one to the framed header would change every frame's additional
-  authenticated data, which changes every committed tag, which means
-  regenerating the vectors — see the next section.
-- Adding one to the compact record would cost five or six bytes on every one of
-  potentially tens of millions of short records, for a self-description the
-  caller already has from the column it read.
+The framed stream spends five bytes on `SEAL1` because it already has a header
+and a blob can afford it. The compact record spends one byte, holding the
+version number and nothing else, and does **not** carry the family name.
 
-What a shared prefix would have bought is that a ciphertext written under one
-version can never be opened as another. That is bought instead by **binding
-each version into its own AAD**, which costs nothing on the wire because AAD is
-authenticated and not stored. `TestTheTwoFormatsAreNotInterchangeable` pins it:
-a framed stream opened as a compact record, and a compact record opened as a
-framed stream, are both `ErrCorrupt`.
+Making the compact record self-describing in the same way would cost four or
+five bytes on every one of potentially tens of millions of short values — a
+tenth of the record's whole overhead — for a self-description the caller already
+has from the column it read. What a shared prefix would have bought is that a
+ciphertext written under one version can never be opened as another, and that is
+bought instead by **binding each version number into its own AAD**, which costs
+nothing on the wire because AAD is authenticated rather than stored.
+`TestTheTwoFormatsAreNotInterchangeable` pins it: a framed stream opened as a
+compact record, and a compact record opened as a framed stream, are both
+`ErrCorrupt`.
 
-The two formats' HKDF `info` strings differ as well (`"CASF1 frame key"` and
+The two formats' HKDF `info` strings differ as well (`"SEAL1 frame key"` and
 `"SEAL2 record key"`), so the same DEK used for both derives independent keys
 even if a salt value happened to repeat across them.
 
-## Naming, and why the framed format's magic still says CASF1
+The cost, stated: a loose 33-byte blob is not identifiable as a compact record
+by inspection the way a framed stream is by its magic. Anything holding compact
+records knows what they are from the schema that stores them, and a format that
+cannot be identified out of context is the price of a format small enough to use
+per attribute.
 
-The module is `seal`, the family is **SEAL**, and the framed format's five
-magic bytes spell `CASF1` — the module it was extracted from rather than the
-module that now owns it. That is the one place this module keeps a spelling it
-would not have chosen, and it is deliberate.
+## Not wire-compatible with `cas/internal/crypto`
 
-The framed format arrives here as an extraction of `cas/internal/crypto`, with
-a committed format specification and `testdata/vectors.json`, and a test that
-decrypts that committed ciphertext byte for byte. That test is the only
-mechanism that stops this document and the code drifting apart, and it is worth
-more than the spelling. Renaming the magic changes every frame's AAD, which
-changes every committed tag, which means regenerating the vectors — and at that
-point the property is gone and only the file remains.
+The framed format is an extraction of `cas/internal/crypto`. The code came
+across, the properties came across, and the tests came across under their own
+names. **The wire format did not.**
 
-The middle path — accept `CASF1` on read, write a renamed magic on new streams
-— was also rejected. It is two formats for one job, a migration no consumer
-asked for, and a doubled test matrix, bought with a nicer spelling.
+That implementation's magic was `CASF1` and its HKDF info string
+`"CASF1 frame key"`. Both are renamed here, to `SEAL1` and
+`"SEAL1 frame key"`. Because the magic is bound into every frame's AAD and the
+info string determines the frame key, that changes both the keystream and every
+tag: **ciphertext written by `cas/internal/crypto` does not decrypt under
+`seal`, and ciphertext written by `seal` does not decrypt under
+`cas/internal/crypto`.**
 
-A wire magic is a historical constant in every format that has one; `GIF89a`
-does not name a company either. What the module is called, what the document is
-called, and what the Go identifiers are called are all `seal`'s; the five bytes
-on the wire record where the format came from.
+This is deliberate, and there is **no compatibility path** — no second accepted
+magic, no version shim, nothing to delete later. It cost nothing, because
+nothing has ever been persisted: CAS is unreleased and untagged, with no
+deployment and no stored blobs, so there is no data to be compatible with.
+Carrying another module's spelling forever for the sake of bytes that do not
+exist is the kind of debt that is cheapest to refuse on the day it would be
+taken on. CAS keeps its own copy until it swaps, at which point it still has
+nothing stored.
 
-The compact record, having no stored ciphertext anywhere to be compatible with,
-is named in the new space from the start: its AAD domain label is `SEAL2`.
+The practical consequence, for whoever meets it: **a blob whose first five bytes
+read `CASF1` was written by CAS's own copy, and this module rejects it as
+`ErrCorrupt`.** That is the expected answer, not a bug — and it is the same
+answer as for any other wrong magic, because `ErrCorrupt` deliberately never
+says which check failed.
+
+The committed vectors were regenerated once, for this rename, and must not be
+regenerated again casually. What they protect is **future** drift between this
+document and the code, which survives one deliberate regeneration and is lost
+only to a careless one. See [Test vectors](#test-vectors).
 
 ---
 
@@ -120,7 +138,7 @@ CAS's, under their own names.
 
 | field      | size | value                                                 |
 |------------|------|-------------------------------------------------------|
-| magic      | 5    | ASCII `"CASF1"`                                        |
+| magic      | 5    | ASCII `"SEAL1"`                                        |
 | frame_size | 4    | big-endian uint32, the stream's plaintext frame size   |
 | salt       | 16   | random, unique per stream                              |
 
@@ -180,7 +198,7 @@ frame, when the plaintext length is an exact multiple of `frame_size`).
 A single AES-256 key is derived once per stream, shared by every frame:
 
 ```
-frame_key = HKDF-SHA256(secret = dek, salt = header.salt, info = "CASF1 frame key", length = 32)
+frame_key = HKDF-SHA256(secret = dek, salt = header.salt, info = "SEAL1 frame key", length = 32)
 ```
 
 `dek` is the caller-supplied data encryption key — a `keyring.DEK`, whose
@@ -655,11 +673,19 @@ nobody arrives at by forgetting.
 
 ### Version 1 — `internal/framed/testdata/vectors.json`
 
-Carried across **byte for byte** from `cas/internal/crypto/testdata/vectors.json`
-when the format was extracted: every `dek_hex`, `plaintext_hex` and
-`ciphertext_hex` is CAS's, unchanged. CAS's ciphertext decrypting under this
-module's code is what makes this an extraction rather than a rewrite that
-happens to pass its own tests.
+Generated once, deliberately, by `gen_vectors_test.go -write-framed-vectors`,
+each with a fixed DEK and a fixed salt so the ciphertext is reproducible. The
+generator is in the tree so the provenance of the committed bytes is auditable —
+which DEK, which salt, which frame size, which address — **not** so a failing
+vector has somewhere to be regenerated from. It skips by default.
+
+These are **not** CAS's bytes; see
+[Not wire-compatible with `cas/internal/crypto`](#not-wire-compatible-with-casinternalcrypto).
+Everything that is not the wire format — the DEKs, salts, frame sizes, tenant
+and content addresses — is CAS's original fixture unchanged, so that the diff
+which regenerated this file shows the format changing and little else; the only
+other change is the first vector's plaintext, an ASCII sentence that used to
+name CAS.
 
 It commits a `"vectors"` array, not a single fixture, because one small
 single-frame vector is byte-identical under several wire format changes that
@@ -677,7 +703,10 @@ The three-frame vector's discriminating power was verified in CAS directly
 against a decoder built from the format document alone: it rejects a decoder
 that uses little-endian nonces, little-endian AAD frame indices, a different
 final-flag encoding, a different wire stride, or an "every frame is final" rule,
-where the single-frame vector by itself catches only one of those five.
+where the single-frame vector by itself catches only one of those five. The
+rename changed the bytes, not the shape, so that reasoning carries over
+unchanged: the vector is still one stream of three frames at a small frame size,
+covering `final=false`, an index above zero, and a short final frame.
 
 ### Version 2 — `internal/compact/testdata/vectors.json`
 

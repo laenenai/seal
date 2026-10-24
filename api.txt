@@ -158,9 +158,9 @@ func FramedCiphertextLen(n int64) int64
 
 const FramedHeaderSize = len(FramedMagic) + 4 + FramedSaltSize
 
-const FramedKeyInfo = "CASF1 frame key"
+const FramedKeyInfo = "SEAL1 frame key"
 
-const FramedMagic = "CASF1"
+const FramedMagic = "SEAL1"
 
 const FramedSaltSize = 16
 

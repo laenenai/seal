@@ -7,40 +7,47 @@ package domain
 //
 // A format version here names a (shape, revision) pair, and the next change to
 // either shape takes the next number in this one space rather than a second
-// counter of its own. So "format version 1" is the framed stream as CAS
-// shipped it and "format version 2" is the compact record; a future reframing
-// of the framed format is version 3, not "CASF2". The cost of one space is
-// that the numbers no longer read as "revision 1 of the framed format"; what
-// it buys is that a version number is unambiguous on its own, which is what
-// matters when it is the thing bound into an AEAD tag and the thing a stored
-// row records.
+// counter of its own. Version 1 is the framed stream and version 2 is the
+// compact record; a future reframing of the framed format is version 3. The
+// cost of one space is that the numbers no longer read as "revision 1 of the
+// framed format"; what it buys is that a version number is unambiguous on its
+// own, which is what matters when it is the thing bound into an AEAD tag and
+// the thing a stored row records.
+//
+// The two formats' identifiers say the same number the registry does: the
+// framed stream's magic is "SEAL1" and its HKDF info is "SEAL1 frame key"; the
+// compact record's wire discriminator is the byte 2 and its HKDF info is
+// "SEAL2 record key". One number, spelled the same way everywhere it appears,
+// so there is nothing to keep in step.
 //
 // Every version is bound into its own additional authenticated data, which is
-// what a shared magic prefix would have been for: a ciphertext written under
-// one version cannot be opened as another, because the version is part of what
-// every tag was computed over. See AAD construction in internal/framed and
-// internal/compact, and docs/format.md for the registry in prose.
+// what a shared magic prefix would otherwise have been for: a ciphertext
+// written under one version cannot be opened as another, because the version is
+// part of what every tag was computed over. See AAD construction in
+// internal/framed and internal/compact, and docs/format.md for the registry in
+// prose.
 //
-// # Why the framed format's magic still says CASF1
+// # This format is not wire-compatible with cas/internal/crypto
 //
-// FramedMagic is five ASCII bytes spelling "CASF1", which names the module the
-// format was extracted from rather than the module that now owns it. That is
-// deliberate and it is the one place this module keeps a spelling it would not
-// have chosen.
+// The framed format is an extraction of cas/internal/crypto, and the code, the
+// properties and the tests came across. The wire format did not: that
+// implementation's magic was "CASF1" and its HKDF info "CASF1 frame key", and
+// both are renamed here. Since the magic is bound into every frame's AAD and
+// the info string determines the frame key, ciphertext written by
+// cas/internal/crypto does not decrypt under this package — and there is no
+// compatibility path: no second accepted magic, no version shim, nothing to
+// delete later.
 //
-// The framed format arrives here with a committed format document and
-// testdata/vectors.json, and a test that decrypts that committed ciphertext
-// byte for byte. That test is the only mechanism that stops the document and
-// the code drifting silently, and it is worth more than the spelling: renaming
-// the magic changes every frame's additional authenticated data, which changes
-// every committed tag, which means regenerating the vectors — and a module
-// that regenerates its vectors has thrown the property away and kept the file.
+// That is deliberate and it cost nothing, because nothing has ever been
+// persisted. CAS is unreleased and untagged, with no deployment and no stored
+// blobs, so there is no data to be compatible with; carrying another module's
+// spelling forever for the sake of bytes that do not exist is the kind of debt
+// that is cheapest to refuse on the day it would be taken on. CAS keeps its own
+// copy until it swaps, at which point it still has nothing stored.
 //
-// The middle path — accept "CASF1" on read, write a renamed magic on new
-// streams — was considered and rejected. It is two formats for one job, a
-// migration no consumer asked for, and a doubled test matrix, bought with a
-// nicer spelling. A wire magic is a historical constant in every format that
-// has one; "GIF89a" does not name a company either.
+// The practical consequence, for whoever meets it: a stored blob whose first
+// five bytes read "CASF1" was written by CAS's own copy, and this package
+// rejects it as ErrCorrupt. That is the expected answer, not a bug.
 
 // Version is a format version in the module's single version space. It is one
 // byte on the wire wherever it appears there, and is bound into every AEAD
@@ -49,9 +56,9 @@ type Version uint8
 
 const (
 	// VersionFramed is format version 1: the framed streaming AEAD, extracted
-	// verbatim from cas/internal/crypto. Its wire discriminator is the
-	// five-byte FramedMagic at the head of the stream header, not a Version
-	// byte; the number is what the registry and the AAD know it by.
+	// from cas/internal/crypto. Its wire discriminator is the five-byte
+	// FramedMagic at the head of the stream header, not a Version byte, and
+	// that magic spells the same number this constant holds.
 	VersionFramed Version = 1
 
 	// VersionCompact is format version 2: the compact record for small whole
@@ -74,14 +81,14 @@ func (v Version) String() string {
 	}
 }
 
-// Framed format (version 1) constants. These describe the committed CASF1
-// wire format and must not change without changing docs/format.md and the
-// committed vectors together, deliberately — silent drift here means
-// previously stored ciphertext becomes unreadable.
+// Framed format (version 1) constants. These describe the committed wire
+// format and must not change without changing docs/format.md and the committed
+// vectors together, deliberately — silent drift here means previously stored
+// ciphertext becomes unreadable.
 const (
-	// FramedMagic is the five ASCII bytes at the head of every framed stream.
-	// See this file's doc comment for why it still spells CASF1.
-	FramedMagic = "CASF1"
+	// FramedMagic is the five ASCII bytes at the head of every framed stream,
+	// naming the family and the format's version in one token.
+	FramedMagic = "SEAL1"
 
 	// FramedSaltSize is the size of a framed stream's per-stream random salt.
 	FramedSaltSize = 16
@@ -92,8 +99,9 @@ const (
 
 	// FramedKeyInfo is the HKDF info string the per-stream frame key is
 	// derived under. It is part of the wire format: changing it makes every
-	// stored stream undecryptable.
-	FramedKeyInfo = "CASF1 frame key"
+	// stored stream undecryptable, because it changes the frame key and not
+	// merely the tag.
+	FramedKeyInfo = "SEAL1 frame key"
 
 	// FrameSize is the number of plaintext bytes sealed into every frame
 	// except possibly the last, which may be shorter (and is always present,
@@ -127,8 +135,9 @@ const (
 
 	// CompactKeyInfo is the HKDF info string a compact record's per-record key
 	// and nonce are derived under, in one expansion. It names the format
-	// version, so the derivation is domain-separated from the framed format's
-	// even when the same DEK is used for both.
+	// version — SEAL2 to the framed stream's SEAL1 — so the derivation is
+	// domain-separated from the framed format's even when the same DEK is used
+	// for both.
 	CompactKeyInfo = "SEAL2 record key"
 
 	// CompactPrefixSize is the unencrypted prefix of a compact record: one

@@ -52,40 +52,57 @@ found:
 Per the project's extraction rule: take the most advanced consumer's working
 code, never design fresh.
 
-**Done, 2026-10-24.** CASF1 is `internal/framed`, and CAS's
-`testdata/vectors.json` came across byte for byte —
-`TestVectors_MatchCommittedTestdata` decrypts CAS's committed ciphertext under
-this module's code, which is the evidence that this was an extraction and not a
-rewrite that happens to pass its own tests. All of CAS's tests are ported under
-their own names. CAS keeps its copy until it swaps, and
-`sealtest.RunStreamSealerSuite` is what it can run against that copy in the
-meantime.
+**Done, 2026-10-24.** The framed format is `internal/framed`. Every property
+above is preserved and all 24 of CAS's tests are ported under their own names,
+because a renamed test is a test nobody can trace back to its bug.
+`testdata/vectors.json` keeps CAS's fixture inputs — the same DEKs, salts, frame
+sizes, tenant and content addresses — so what the extraction changed is visible,
+and `TestVectors_MatchCommittedTestdata` decrypts the committed ciphertext
+directly, which is what stops `docs/format.md` and the code drifting silently.
+CAS keeps its copy until it swaps, and `sealtest.RunStreamSealerSuite` is what
+it can run against that copy in the meantime.
 
 The earlier sequencing note here — "after CAS's ~2026-11-05 alpha" — is stale
 and is removed rather than left to be believed: the owner reordered to implement
 every module before returning to CAS, which made `seal` the thing blocking CAS's
 step 4 rather than something waiting on it.
 
-### What the format family is called
+### What the format family is called, and what it is not compatible with
 
 The family is **SEAL**, with one numbered version space across both shapes:
 version 1 is the framed stream, version 2 the compact record, and the next
 change to either takes the next number rather than starting a second counter.
+Every identifier says that number — the framed magic is `SEAL1` and its HKDF
+info `"SEAL1 frame key"`; the compact record's wire byte is `2` and its HKDF
+info `"SEAL2 record key"` — so there is nothing to keep in step.
 
-The framed format's five wire magic bytes still spell `CASF1`. That is
-deliberate, and `docs/format.md` argues it at length: renaming the magic changes
-every frame's AAD, which changes every committed tag, which means regenerating
-the vectors — and the vectors are the only thing stopping the format document
-and the code drifting silently. There is no shared ASCII prefix across the two
-shapes, for that reason on one side and for the sake of a third of the compact
-record's overhead on the other; what a shared prefix would have bought is bought
-instead by binding each version number into its own AAD, which costs nothing on
-the wire because AAD is authenticated rather than stored.
+**The wire format is deliberately not compatible with `cas/internal/crypto`.**
+CAS's magic and info string were `CASF1`; both are renamed, which changes the
+frame key and every tag, so ciphertext CAS wrote does not decrypt here. There is
+no second accepted magic and no version shim. The rename cost nothing because
+**nothing has ever been persisted** — CAS is unreleased and untagged, with no
+deployment and no stored blobs — so there was no data to be compatible with, and
+carrying another module's spelling forever for bytes that do not exist is debt
+taken on for no return. CAS keeps its own copy until it swaps, at which point it
+still has nothing stored.
 
-## The shape CASF1 does not have
+The committed vectors were regenerated once, for that rename, and must not be
+regenerated again casually. What they protect is **future** drift between
+`docs/format.md` and the code; that survives one deliberate regeneration and is
+lost only to a careless one.
 
-**A compact record for small values.** CASF1's 25-byte header plus a 16-byte
-tag per frame is 0.004% overhead on a 1 MiB blob and **over 200% on a 20-byte
+There is no shared *stored* prefix across the two shapes: a framed stream spends
+five bytes on its magic because it has a header and a blob can afford it, and a
+compact record spends one, because four or five more would be a tenth of its
+whole overhead for a self-description the caller already has from the column it
+read. What a shared prefix would have bought is bought instead by binding each
+version number into its own AAD, which costs nothing on the wire because AAD is
+authenticated rather than stored.
+
+## The shape the framed format does not have
+
+**A compact record for small values.** The framed format's 25-byte header plus a
+16-byte tag per frame is 0.004% overhead on a 1 MiB blob and **over 200% on a 20-byte
 fact literal**. kgs encrypts per-attribute (its design §23.1), which means
 potentially tens of millions of short values, so the framed format is the wrong
 tool there.
@@ -96,7 +113,7 @@ has no framing, derives its nonce rather than storing it where the construction
 allows, and binds its AAD to the value's address.
 
 **That AAD binding is the point, not an optimisation.** Generalised from
-CASF1's object binding, a kgs attribute value is bound to
+the framed format's object binding, a kgs attribute value is bound to
 `(graph, fact id, attribute)`. Without it an encrypted `salary` value can be
 **relocated onto another row** — by a bug, or by anyone with database write
 access — and will decrypt cleanly to the wrong answer. With it, relocation is
@@ -116,7 +133,7 @@ non-streaming one with a maximum byte size.
 
 Worth separating two axes that are easy to conflate:
 
-- **Format** is chosen by whether ranged reads are needed: *framed* (CASF1) for
+- **Format** is chosen by whether ranged reads are needed: *framed* for
   blobs and anything read by range; *compact record* for a whole small value.
 - **API shape** is chosen by where the bytes are: *streaming* (`io.Writer` /
   `io.Reader` / `io.ReaderAt` for ranges) or *one-shot* (`[]byte` in, `[]byte`
@@ -131,8 +148,8 @@ security control rather than a courtesy.** Five rules it must follow:
    is the one that matters, because an attacker controls the ciphertext's
    length.
 2. **Checked before allocation**, from the declared or derivable length — never
-   by reading and discovering. This is the allocation-bomb pattern, and CASF1
-   already applies the same reasoning to `frame_size`, whose bounds exist
+   by reading and discovering. This is the allocation-bomb pattern, and the
+   framed format already applies the same reasoning to `frame_size`, whose bounds exist
    "purely to bound decoder resource use" and authenticate nothing. Two
    mechanisms, kept distinct.
 3. **Fail closed on an unknown length.** If a limit is configured and the input
@@ -148,7 +165,7 @@ security control rather than a courtesy.** Five rules it must follow:
    bound the caller's.
 
 **Default ceiling (open to revision):** 1 MiB for the compact record, chosen so
-a compact record never exceeds what a single CASF1 frame would hold — which
+a compact record never exceeds what a single framed frame would hold — which
 keeps one invariant across both formats and makes the choice between them a
 question about ranged reads rather than about size. Configurable upward
 explicitly; a deployment that raises it has said so.
@@ -163,7 +180,7 @@ on CAS's milestone.
 
 | Consumer | State |
 |---|---|
-| cas | **unblocked, swap pending** — CAS's `internal/crypto` is now `seal`'s `internal/framed`, and CAS's committed vectors decrypt here unchanged. CAS's step 4 is to delete its copy (~1,740 lines including spec and tests) and import this module. `sealtest.RunStreamSealerSuite` runs against CAS's existing implementation, which is what makes the swap a verified substitution rather than a rewrite. |
+| cas | **unblocked, swap pending** — CAS's `internal/crypto` is now `seal`'s `internal/framed`. CAS's step 4 is to delete its copy (~1,740 lines including spec and tests) and import this module. `sealtest.RunStreamSealerSuite` runs against CAS's existing implementation, which is what makes the swap a verified substitution rather than a rewrite. The wire format is **not** compatible with CAS's — see above — and that costs nothing to swap because CAS has nothing stored; it does mean the swap must be a cutover and not a dual-read. |
 | kgs | **unblocked** — the compact record (format version 2) is implemented, with the `(graph, fact id, attribute)` binding its per-attribute encryption needs (its design §23.1, leak channel #17). |
 | acre | not expected |
 
