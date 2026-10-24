@@ -109,7 +109,7 @@ func TestGenerateCommittedVectors(t *testing.T) {
 		if err != nil {
 			t.Fatalf("%s: NewRecordAddress: %v", c.name, err)
 		}
-		limits, err := domain.Limits{}.Resolve(domain.CompactOverhead)
+		limits, err := domain.Limits{}.ResolveCompact()
 		if err != nil {
 			t.Fatalf("%s: Resolve: %v", c.name, err)
 		}

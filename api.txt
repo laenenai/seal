@@ -1,0 +1,249 @@
+# Public API of github.com/laenenai/seal, as a golden file.
+#
+# Regenerate with: go test . -run TestAPIGolden -update-api
+#
+# "package seal" is the facade a consumer imports; "package sealtest" is the
+# conformance suite it runs against its own implementation. internal/domain is
+# listed too, because the facade re-exports its types as aliases: a change to
+# one of those signatures changes what a consumer sees, even though the import
+# path itself is private. internal/framed and internal/compact are not listed
+# — the facade forwards to them rather than aliasing them, so a change there is
+# a compile error in seal.go. Growing this file is a reviewed diff; see
+# CHARTER.md.
+
+package seal // .
+
+func Compact() RecordSealer
+
+const CompactOverhead = domain.CompactOverhead
+
+type DEK = keyring.DEK
+
+func DecryptObject(dek DEK, addr ObjectAddress, ciphertext []byte, limits Limits) ([]byte, error)
+
+func DecryptRecord(dek DEK, addr RecordAddress, record []byte, limits Limits) ([]byte, error)
+
+const DefaultMaxPlaintext = domain.DefaultMaxPlaintext
+
+func EncryptObject(dek DEK, addr ObjectAddress, plaintext []byte, limits Limits) ([]byte, error)
+
+func EncryptRecord(dek DEK, addr RecordAddress, plaintext []byte, limits Limits) ([]byte, error)
+
+var ErrClosed = domain.ErrClosed
+
+var ErrCorrupt = domain.ErrCorrupt
+
+var ErrInvalidAddress = domain.ErrInvalidAddress
+
+var ErrInvalidDEK = domain.ErrInvalidDEK
+
+var ErrInvalidFrameSize = domain.ErrInvalidFrameSize
+
+var ErrInvalidLimit = domain.ErrInvalidLimit
+
+var ErrLimitExceeded = domain.ErrLimitExceeded
+
+var ErrRange = domain.ErrRange
+
+var ErrUnknownLength = domain.ErrUnknownLength
+
+const FrameSize = domain.FrameSize
+
+func Framed() StreamSealer
+
+type LimitError = domain.LimitError
+
+type Limits = domain.Limits
+
+const MaxFrameSize = domain.MaxFrameSize
+
+const MinFrameSize = domain.MinFrameSize
+
+func NewDecryptRangeReader(
+	ra io.ReaderAt, size int64, dek DEK, addr ObjectAddress, off, length int64,
+) (io.Reader, error)
+
+func NewDecryptReader(r io.Reader, dek DEK, addr ObjectAddress, maxPlaintext int64) (io.ReadCloser, error)
+
+func NewEncryptWriter(w io.Writer, dek DEK, addr ObjectAddress) (io.WriteCloser, error)
+
+func NewObjectAddress(tenant, object string) (ObjectAddress, error)
+
+func NewRecordAddress(parts ...string) (RecordAddress, error)
+
+func NewRecordReader(r io.Reader, dek DEK, addr RecordAddress, limits Limits) (io.Reader, error)
+
+func NewRecordWriter(w io.Writer, dek DEK, addr RecordAddress, limits Limits) (io.WriteCloser, error)
+
+type ObjectAddress = domain.ObjectAddress
+
+type RecordAddress = domain.RecordAddress
+
+type RecordSealer interface {
+	EncryptRecord(dek DEK, addr RecordAddress, plaintext []byte, limits Limits) ([]byte, error)
+	DecryptRecord(dek DEK, addr RecordAddress, record []byte, limits Limits) ([]byte, error)
+	NewRecordWriter(w io.Writer, dek DEK, addr RecordAddress, limits Limits) (io.WriteCloser, error)
+	NewRecordReader(r io.Reader, dek DEK, addr RecordAddress, limits Limits) (io.Reader, error)
+}
+
+const Redacted = domain.Redacted
+
+type StreamSealer interface {
+	NewEncryptWriter(w io.Writer, dek DEK, addr ObjectAddress) (io.WriteCloser, error)
+	NewDecryptReader(r io.Reader, dek DEK, addr ObjectAddress, maxPlaintext int64) (io.ReadCloser, error)
+	NewDecryptRangeReader(
+		ra io.ReaderAt, size int64, dek DEK, addr ObjectAddress, off, length int64,
+	) (io.Reader, error)
+	EncryptObject(dek DEK, addr ObjectAddress, plaintext []byte, limits Limits) ([]byte, error)
+	DecryptObject(dek DEK, addr ObjectAddress, ciphertext []byte, limits Limits) ([]byte, error)
+}
+
+const Unlimited = domain.Unlimited
+
+type Version = domain.Version
+
+const VersionCompact = domain.VersionCompact
+
+const VersionFramed = domain.VersionFramed
+
+package sealtest // sealtest
+
+func NoSecretLeaksInAnyRendering(t *testing.T, v any, material []byte)
+
+func RendersOnlyARedactionMarker(t *testing.T, v any)
+
+func RunRecordSealerSuite(t *testing.T, newSealer func(t *testing.T) seal.RecordSealer)
+
+func RunStreamSealerSuite(t *testing.T, newSealer func(t *testing.T) seal.StreamSealer)
+
+package domain // internal/domain
+
+func CompactCiphertextLen(n int64) int64
+
+const CompactKeyInfo = "SEAL2 record key"
+
+const CompactOverhead = CompactPrefixSize + TagSize
+
+const CompactPrefixSize = 1 + CompactSaltSize
+
+const CompactSaltSize = 16
+
+const DEKSize = 32
+
+const DefaultMaxPlaintext int64 = 1 << 20
+
+func DerivableLength(r io.Reader) (int64, bool)
+
+var ErrClosed = errors.New("seal: write to a closed writer")
+
+var ErrCorrupt = errors.New("seal: corrupt ciphertext")
+
+var ErrInvalidAddress = errors.New("seal: invalid address")
+
+var ErrInvalidDEK = errors.New("seal: dek holds no usable key material")
+
+var ErrInvalidFrameSize = errors.New("seal: frame size out of range")
+
+var ErrInvalidLimit = errors.New("seal: invalid size limit")
+
+var ErrLimitExceeded = errors.New("seal: size limit exceeded")
+
+var ErrRange = errors.New("seal: invalid byte range")
+
+var ErrUnknownLength = errors.New("seal: input length cannot be established before reading")
+
+const FrameSize = 1 << 20
+
+func FramedCiphertextLen(n int64) int64
+
+const FramedHeaderSize = len(FramedMagic) + 4 + FramedSaltSize
+
+const FramedKeyInfo = "CASF1 frame key"
+
+const FramedMagic = "CASF1"
+
+const FramedSaltSize = 16
+
+type LimitError struct {
+	Limit string
+	Max int64
+	Actual int64
+}
+
+func (*LimitError) Error() string
+
+func (*LimitError) Unwrap() error
+
+type Limits struct {
+	MaxPlaintext int64
+	MaxCiphertext int64
+}
+
+func (Limits) ResolveCompact() (Resolved, error)
+
+func (Limits) ResolveFramed() (Resolved, error)
+
+const MaxFrameSize = 8 * 1024 * 1024
+
+const MinFrameSize = 64
+
+func NewObjectAddress(tenant, object string) (ObjectAddress, error)
+
+func NewRecordAddress(parts ...string) (RecordAddress, error)
+
+const NonceSize = 12
+
+type ObjectAddress struct {
+	// has unexported fields
+}
+
+func (ObjectAddress) AppendAAD(dst []byte) []byte
+
+func (ObjectAddress) IsZero() bool
+
+func (ObjectAddress) Object() string
+
+func (ObjectAddress) String() string
+
+func (ObjectAddress) Tenant() string
+
+type RecordAddress struct {
+	// has unexported fields
+}
+
+func (RecordAddress) AppendAAD(dst []byte) []byte
+
+func (RecordAddress) IsZero() bool
+
+func (RecordAddress) Parts() []string
+
+func (RecordAddress) String() string
+
+const Redacted = "[REDACTED]"
+
+func RedactedAs(name string) string
+
+type Resolved struct {
+	MaxPlaintext int64
+	MaxCiphertext int64
+}
+
+func (Resolved) Bounded() bool
+
+func (Resolved) CheckCiphertext(n int64) error
+
+func (Resolved) CheckPlaintext(n int64) error
+
+const TagSize = 16
+
+const Unlimited int64 = -1
+
+func ValidateStreamCeiling(maxPlaintext int64) error
+
+type Version uint8
+
+func (Version) String() string
+
+const VersionCompact Version = 2
+
+const VersionFramed Version = 1

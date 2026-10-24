@@ -42,19 +42,18 @@ func testAddress(t *testing.T, parts ...string) domain.RecordAddress {
 // derived from it.
 func defaultLimits(t *testing.T) domain.Resolved {
 	t.Helper()
-	r, err := domain.Limits{}.Resolve(domain.CompactOverhead)
+	r, err := domain.Limits{}.ResolveCompact()
 	if err != nil {
-		t.Fatalf("Limits{}.Resolve: %v", err)
+		t.Fatalf("Limits{}.ResolveCompact: %v", err)
 	}
 	return r
 }
 
 func unlimited(t *testing.T) domain.Resolved {
 	t.Helper()
-	r, err := domain.Limits{MaxPlaintext: domain.Unlimited, MaxCiphertext: domain.Unlimited}.
-		Resolve(domain.CompactOverhead)
+	r, err := domain.Limits{MaxPlaintext: domain.Unlimited, MaxCiphertext: domain.Unlimited}.ResolveCompact()
 	if err != nil {
-		t.Fatalf("unlimited Resolve: %v", err)
+		t.Fatalf("unlimited ResolveCompact: %v", err)
 	}
 	return r
 }
@@ -366,7 +365,7 @@ func TestCeilings_EnforceTheFiveRules(t *testing.T) {
 	addr := testAddress(t, "graph-1", "fact-1", "salary")
 
 	t.Run("rule 1: the plaintext ceiling bounds what a caller hands us", func(t *testing.T) {
-		limits, err := domain.Limits{MaxPlaintext: 16}.Resolve(domain.CompactOverhead)
+		limits, err := domain.Limits{MaxPlaintext: 16}.ResolveCompact()
 		if err != nil {
 			t.Fatalf("Resolve: %v", err)
 		}
@@ -395,8 +394,7 @@ func TestCeilings_EnforceTheFiveRules(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Seal: %v", err)
 		}
-		readLimits, err := domain.Limits{MaxPlaintext: domain.Unlimited, MaxCiphertext: 1024}.
-			Resolve(domain.CompactOverhead)
+		readLimits, err := domain.Limits{MaxPlaintext: domain.Unlimited, MaxCiphertext: 1024}.ResolveCompact()
 		if err != nil {
 			t.Fatalf("Resolve: %v", err)
 		}
@@ -415,7 +413,7 @@ func TestCeilings_EnforceTheFiveRules(t *testing.T) {
 	})
 
 	t.Run("rule 2: the streaming writer never buffers past its ceiling", func(t *testing.T) {
-		limits, err := domain.Limits{MaxPlaintext: 32}.Resolve(domain.CompactOverhead)
+		limits, err := domain.Limits{MaxPlaintext: 32}.ResolveCompact()
 		if err != nil {
 			t.Fatalf("Resolve: %v", err)
 		}
@@ -474,7 +472,7 @@ func TestCeilings_EnforceTheFiveRules(t *testing.T) {
 	})
 
 	t.Run("rule 3: a declared length over the ceiling is refused before any read", func(t *testing.T) {
-		limits, err := domain.Limits{MaxCiphertext: 8}.Resolve(domain.CompactOverhead)
+		limits, err := domain.Limits{MaxCiphertext: 8}.ResolveCompact()
 		if err != nil {
 			t.Fatalf("Resolve: %v", err)
 		}
@@ -508,10 +506,10 @@ func TestCeilings_EnforceTheFiveRules(t *testing.T) {
 	})
 
 	t.Run("a nonsensical ceiling is refused rather than guessed at", func(t *testing.T) {
-		if _, err := (domain.Limits{MaxPlaintext: -2}).Resolve(domain.CompactOverhead); !errors.Is(err, domain.ErrInvalidLimit) {
+		if _, err := (domain.Limits{MaxPlaintext: -2}).ResolveCompact(); !errors.Is(err, domain.ErrInvalidLimit) {
 			t.Errorf("MaxPlaintext=-2: err = %v, want ErrInvalidLimit", err)
 		}
-		if _, err := (domain.Limits{MaxCiphertext: -7}).Resolve(domain.CompactOverhead); !errors.Is(err, domain.ErrInvalidLimit) {
+		if _, err := (domain.Limits{MaxCiphertext: -7}).ResolveCompact(); !errors.Is(err, domain.ErrInvalidLimit) {
 			t.Errorf("MaxCiphertext=-7: err = %v, want ErrInvalidLimit", err)
 		}
 	})

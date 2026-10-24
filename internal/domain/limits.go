@@ -83,16 +83,29 @@ type Resolved struct {
 	MaxCiphertext int64
 }
 
-// Resolve fills in l's defaults for a format whose ciphertext costs overhead
-// bytes more than its plaintext, and rejects a nonsensical ceiling with
-// ErrInvalidLimit.
+// ResolveCompact fills in l's defaults for the compact record and rejects a
+// nonsensical ceiling with ErrInvalidLimit.
+func (l Limits) ResolveCompact() (Resolved, error) { return l.resolve(CompactCiphertextLen) }
+
+// ResolveFramed fills in l's defaults for the framed stream and rejects a
+// nonsensical ceiling with ErrInvalidLimit.
 //
-// The ciphertext default is derived with an overflow guard rather than a bare
-// addition: MaxPlaintext is a caller-supplied int64, and a caller that passes
+// There are two of these rather than one taking an overhead, because the two
+// formats' overheads are shaped differently: a compact record costs a fixed 33
+// bytes, while a framed stream costs a header plus one tag per frame, so its
+// ciphertext ceiling depends on the plaintext ceiling non-linearly. A single
+// flat number would have to be wrong for one of them.
+func (l Limits) ResolveFramed() (Resolved, error) { return l.resolve(FramedCiphertextLen) }
+
+// resolve fills in the defaults, deriving the ciphertext ceiling from the
+// plaintext one through ciphertextFor when the caller left it zero.
+//
+// The derivation is guarded against overflow rather than being a bare call:
+// MaxPlaintext is a caller-supplied int64, and a caller that passes
 // math.MaxInt64 meaning "effectively unlimited" would otherwise wrap the
 // derived ciphertext ceiling negative and disable the check it was asking to
 // keep.
-func (l Limits) Resolve(overhead int64) (Resolved, error) {
+func (l Limits) resolve(ciphertextFor func(plaintext int64) int64) (Resolved, error) {
 	plaintext, err := resolveOne("max plaintext", l.MaxPlaintext, DefaultMaxPlaintext)
 	if err != nil {
 		return Resolved{}, err
@@ -100,11 +113,8 @@ func (l Limits) Resolve(overhead int64) (Resolved, error) {
 
 	derived := Unlimited
 	if plaintext != Unlimited {
-		derived = plaintext
-		if derived <= math.MaxInt64-overhead {
-			derived += overhead
-		} else {
-			derived = math.MaxInt64
+		if derived = ciphertextFor(plaintext); derived < plaintext {
+			derived = math.MaxInt64 // the addition wrapped; the caller meant "no ceiling worth checking"
 		}
 	}
 	ciphertext, err := resolveOne("max ciphertext", l.MaxCiphertext, derived)

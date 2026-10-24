@@ -137,9 +137,6 @@ const (
 	// no "which prefix bytes are covered" question to work out.
 	CompactPrefixSize = 1 + CompactSaltSize
 
-	// CompactTagSize is the AES-GCM tag every compact record ends with.
-	CompactTagSize = 16
-
 	// CompactOverhead is what a compact record costs over its plaintext: 33
 	// bytes, against 41 for a single-frame framed stream (a 25-byte header
 	// plus a 16-byte tag). On a 1 MiB blob the difference is nothing; on a
@@ -148,12 +145,34 @@ const (
 	// eight bytes, not an order of magnitude. What actually makes the compact
 	// record the right tool for tens of millions of short values is that it
 	// costs one AEAD operation and no framing state, not that it is small.
-	CompactOverhead = CompactPrefixSize + CompactTagSize
+	CompactOverhead = CompactPrefixSize + TagSize
 )
 
-// NonceSize is crypto/cipher's standard GCM nonce size, shared by both
-// formats.
-const NonceSize = 12
+// NonceSize is crypto/cipher's standard GCM nonce size, and TagSize its
+// standard tag size. Both formats use both.
+const (
+	NonceSize = 12
+	TagSize   = 16
+)
+
+// CompactCiphertextLen returns the number of bytes a compact record of n
+// plaintext bytes occupies.
+func CompactCiphertextLen(n int64) int64 { return n + CompactOverhead }
+
+// FramedCiphertextLen returns the number of bytes a framed stream of n
+// plaintext bytes occupies at the production frame size: the header, the
+// plaintext, and one tag per frame.
+//
+// It is exact except when n is an exact multiple of FrameSize, where it is one
+// tag generous — the writer only seals a full buffer as a non-final frame once
+// more data is known to follow, so a plaintext of exactly FrameSize bytes is
+// one frame and not two. A ceiling that is 16 bytes loose is the right side to
+// be wrong on; a ceiling that is 16 bytes tight would refuse a stream the
+// encoder had just produced.
+func FramedCiphertextLen(n int64) int64 {
+	frames := n/FrameSize + 1
+	return int64(FramedHeaderSize) + n + frames*TagSize
+}
 
 // DEKSize is the key size both formats derive down to, and the size of a
 // keyring DEK. It is restated here rather than imported so that this package
