@@ -1,0 +1,39 @@
+{
+  "_comment": "Committed format-version-2 (compact record) vectors. Generated once, deliberately, by gen_vectors_test.go -write-compact-vectors, each with a fixed DEK and a fixed salt so the ciphertext is reproducible; see docs/format.md, 'Test vectors'. TestVectors_MatchCommittedTestdata decrypts each entry's ciphertext_hex directly. It must never be replaced by re-encrypting plaintext_hex and comparing, since the whole point is to catch a silent wire-format change that a round trip cannot. If a committed ciphertext stops decrypting, that is a real failure, not a vector to refresh. Three vectors are committed because one cannot discriminate: a single-component address does not exercise the component count in the AAD, an empty value does not exercise the ciphertext body, and a value whose bytes are all printable would not catch a plaintext that was somehow text-normalised. salt_hex is recorded only so the fixture's provenance is auditable; the decoder reads the salt from the record itself, as every real reader does.",
+  "vectors": [
+    {
+      "name": "twenty_byte_fact_literal",
+      "dek_hex": "3f1d8c04b67a29e5d1430fb8c7265ae90b4d8821f3c6957ea0d412b7683f5c19",
+      "salt_hex": "a1b2c3d4e5f60718293a4b5c6d7e8f90",
+      "address": [
+        "graph-01HZX0COMPACTGRAPH00",
+        "01HZX0COMPACTFACT000000000",
+        "salary"
+      ],
+      "plaintext_hex": "31343735303020455552207065722079656172",
+      "ciphertext_hex": "02a1b2c3d4e5f60718293a4b5c6d7e8f9013403abe0a8b3251ea8a7ce77cb2cb52f581a0eedee16b79a92f141891324814518992"
+    },
+    {
+      "name": "empty_value",
+      "dek_hex": "9e2f71aa05c3b84d6612ff8370d9e4c1528b0a7f3d6e95c2418b7f06da35e9c4",
+      "salt_hex": "0f1e2d3c4b5a69788796a5b4c3d2e1f0",
+      "address": [
+        "graph-01HZX0COMPACTGRAPH00",
+        "01HZX0COMPACTFACT000000001",
+        "middle_name"
+      ],
+      "plaintext_hex": "",
+      "ciphertext_hex": "020f1e2d3c4b5a69788796a5b4c3d2e1f03c62862465abfd82a9c3dc2584c32022"
+    },
+    {
+      "name": "single_component_address_binary_value",
+      "dek_hex": "c0ffee00deadbeef1122334455667788998877665544332211aabbccddeeff00",
+      "salt_hex": "ffeeddccbbaa99887766554433221100",
+      "address": [
+        "blob-01HZX0COMPACTBLOB0000"
+      ],
+      "plaintext_hex": "000102fdfeff007f80",
+      "ciphertext_hex": "02ffeeddccbbaa998877665544332211005f1cc8bcf6884f8065d2d268142ebc84ff1435b11fd33f4f0b"
+    }
+  ]
+}
