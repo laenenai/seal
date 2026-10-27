@@ -27,20 +27,35 @@
 // a full decrypt, each of the five ceiling rules, and the rendering
 // discipline.
 //
-// What it cannot prove is anything that depends on the wire format, because
-// the port deliberately does not expose one. Dropping a frame from the middle
-// of a stream, swapping two frames, rewriting an in-range frame_size, and
-// decrypting a committed ciphertext are all format-specific, and they live in
-// internal/framed's and internal/compact's own tests — which is where the
-// ported CAS tests and the committed vectors are. A suite that tried to reach
-// them would have to assume a layout, and then it would only ever pass for one
+// What it cannot prove is anything that needs the wire format to be *known*,
+// because the port deliberately does not expose one. Rewriting an in-range
+// frame_size and decrypting a committed ciphertext are format-specific, and
+// they live in internal/framed's and internal/compact's own tests — which is
+// where the ported CAS tests and the committed vectors are. A suite that
+// hardcoded a layout to reach them would only ever pass for one
 // implementation.
 //
 // Two of the assertions here are deliberately stronger than their
 // format-specific counterparts rather than weaker: a bit is flipped at every
 // byte position of a small ciphertext, and the ciphertext is truncated at
-// every length, both of which subsume "drop the final frame" and "flip a byte
-// in the header" without needing to know where either is.
+// every length, both of which subsume "flip a byte in the header" without
+// needing to know where it is.
+//
+// # The frame-level properties, and how they are reached
+//
+// They do not subsume anything that needs a *second* frame, and for a long
+// while nothing here had one: every tamper sweep encrypted 200 bytes against a
+// 1 MiB seal.FrameSize, so every sweep ran over a single-frame stream.
+// Truncating one frame at every length is not a dropped final frame, and
+// flipping every bit of one frame never moves a frame within a stream, so the
+// frame-index binding was reachable only from internal/framed — which no other
+// module can import.
+//
+// frames.go closes that: a three-frame fixture, with a dropped final frame, a
+// dropped interior frame and two swapped frames each a named subtest, over a
+// geometry *measured* from the implementation under test rather than assumed
+// from a layout. Its header comment carries the measurement, the sampling and
+// why the sampling must stay.
 package sealtest
 
 import (
@@ -131,10 +146,18 @@ func RunStreamSealerSuite(t *testing.T, newSealer func(t *testing.T) seal.Stream
 		}
 	})
 
+	// The frame-level properties: a dropped final frame, a dropped interior
+	// frame, two swapped frames, and sampled flip and truncation sweeps over a
+	// three-frame stream. See frames.go, and the package comment above for why
+	// the single-frame sweeps below do not cover them.
+	runMultiFrameSubtests(t, newSealer)
+
 	// A security property, and stronger than picking positions: every byte of
 	// a small ciphertext is flipped in turn, which covers the header, every
 	// tag and every ciphertext byte without the suite needing to know where
-	// any of them sit.
+	// any of them sit. It is a *single-frame* stream, though — 200 bytes
+	// against a 1 MiB frame — so it says nothing about a frame's position in a
+	// stream. That is runMultiFrameSubtests's job.
 	t.Run("DetectsAFlippedBitAnywhere", func(t *testing.T) {
 		s := newSealer(t)
 		dek, addr := streamFixture(t)
@@ -149,9 +172,12 @@ func RunStreamSealerSuite(t *testing.T, newSealer func(t *testing.T) seal.Stream
 		}
 	})
 
-	// A security property. Truncating at every length subsumes "the final
-	// frame was dropped" for any framing, and does not depend on where a frame
-	// boundary falls.
+	// A security property, exhaustive over a single-frame stream: every
+	// truncation of it is refused, without the suite needing to know where a
+	// frame boundary falls. It does not subsume "the stream's final frame was
+	// dropped", because this fixture has only one frame and nothing is left
+	// after dropping it; DetectsADroppedFinalFrame in frames.go is that
+	// property.
 	t.Run("DetectsEveryTruncation", func(t *testing.T) {
 		s := newSealer(t)
 		dek, addr := streamFixture(t)
