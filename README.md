@@ -7,8 +7,8 @@ Encrypts and decrypts opaque bytes under a caller-supplied data key, in a
 versioned, vector-pinned format whose ciphertext is bound to the one place it
 belongs — so a value cannot be spliced or relocated and still decrypt.
 
-> **Status: both formats are implemented; there is no release and no external
-> review.**
+> **Status: `v0.1.0` is tagged and adopted by one consumer; there is no
+> external review.**
 >
 > **In, and tested:** the framed stream (format version 1), extracted from
 > `cas/internal/crypto` — all 24 of its property tests ported under their own
@@ -24,23 +24,34 @@ belongs — so a value cannot be spliced or relocated and still decrypt.
 > under `seal` and there is no compatibility shim. Nothing had ever been
 > persisted — CAS is unreleased, untagged, with no deployment and no stored
 > blobs — so there was no data to be compatible with, and no reason to carry
-> another module's spelling forever. CAS keeps its own copy until it swaps, at
-> which point it still has nothing stored.
+> another module's spelling forever. The cutover happened on 2026-10-27 and CAS
+> still had nothing stored.
+>
+> **One consumer has run the suites, and its accounting is the reason for the
+> last change to them.** CAS adopted `seal v0.1.0` on 2026-10-27, deleted its
+> own `internal/crypto` (1,442 lines of Go plus a 298-line format spec), and
+> ran both suites from outside this module for the first time — unchanged,
+> first attempt, no shim, no skipped subtest. It also produced an honest
+> accounting this module's own report had not: of the 23 tests CAS retired, all
+> 23 exist here, but only **11** were reachable from CAS's CI, three of those
+> eleven were weaker than their names suggested, and the secrets-in-errors
+> canary was lost outright. Closing those gaps took the reachable count to
+> **16** and retired all three weaknesses. The remaining seven need the wire
+> format or the test-only frame-size seam and stay in `internal/framed`.
 >
 > **Deliberately out of scope in this pass**, each noted here rather than left
 > to be discovered:
 >
-> - **No release.** No tag. A consumer pins a commit.
+> - **Tagged, which changes what `api.txt` is.** `v0.1.0` is released and CAS
+>   pins it, so the surface in that file is a compatibility promise from here
+>   on rather than a snapshot: growing it is a reviewed diff, shrinking it is a
+>   breaking change.
 > - **No external security review.** The framed format carries CAS's review
 >   history; **format version 2 is new code in a module whose whole subject is
 >   cryptographic construction, and nobody outside this work has looked at
 >   it.** Its construction is documented in [`docs/format.md`](docs/format.md),
 >   including the arithmetic behind its nonce claim, specifically so that
 >   review is possible without reading the implementation first.
-> - **No consumer has run the suites yet.** Both ports pass against this
->   module's own implementations. CAS has a working framed implementation, and
->   running `sealtest.RunStreamSealerSuite` against it is what will make the
->   swap a verified substitution rather than a rewrite; that has not happened.
 > - **No key management, of any kind.** A DEK arrives from
 >   [`keyring`](https://github.com/laenenai/keyring) and this module never
 >   generates, wraps, stores, rotates or destroys one.

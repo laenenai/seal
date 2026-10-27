@@ -241,6 +241,17 @@ func RunStreamSealerSuite(t *testing.T, newSealer func(t *testing.T) seal.Stream
 		}
 		destroyed.Destroy()
 
+		// Every entry point, not only the two that encrypt. A check that runs
+		// before any key is derived is the control — HKDF derives a
+		// usable-looking 32-byte key from an empty secret with no error of its
+		// own, and the salt is public — and a decrypt constructor that skipped
+		// it would derive that key from nothing and then fail to authenticate,
+		// reporting ErrCorrupt for what is actually a destroyed DEK. Checking
+		// only the encrypt side was the third of the three weaknesses CAS
+		// measured in this suite.
+		good := NewDEK(t)
+		ciphertext := mustEncryptObject(t, s, good, addr, patterned(200))
+
 		for name, dek := range map[string]seal.DEK{"zero value": {}, "destroyed": destroyed} {
 			t.Run(name, func(t *testing.T) {
 				if _, err := s.NewEncryptWriter(io.Discard, dek, addr); !errors.Is(err, seal.ErrInvalidDEK) {
@@ -248,6 +259,19 @@ func RunStreamSealerSuite(t *testing.T, newSealer func(t *testing.T) seal.Stream
 				}
 				if _, err := s.EncryptObject(dek, addr, []byte("v"), seal.Limits{}); !errors.Is(err, seal.ErrInvalidDEK) {
 					t.Errorf("EncryptObject: err = %v, want ErrInvalidDEK", err)
+				}
+				if _, err := s.NewDecryptReader(
+					bytes.NewReader(ciphertext), dek, addr, seal.Unlimited,
+				); !errors.Is(err, seal.ErrInvalidDEK) {
+					t.Errorf("NewDecryptReader: err = %v, want ErrInvalidDEK", err)
+				}
+				if _, err := s.NewDecryptRangeReader(
+					bytes.NewReader(ciphertext), int64(len(ciphertext)), dek, addr, 0, 1,
+				); !errors.Is(err, seal.ErrInvalidDEK) {
+					t.Errorf("NewDecryptRangeReader: err = %v, want ErrInvalidDEK", err)
+				}
+				if _, err := s.DecryptObject(dek, addr, ciphertext, seal.Limits{}); !errors.Is(err, seal.ErrInvalidDEK) {
+					t.Errorf("DecryptObject: err = %v, want ErrInvalidDEK", err)
 				}
 			})
 		}
@@ -339,6 +363,60 @@ func RunStreamSealerSuite(t *testing.T, newSealer func(t *testing.T) seal.Stream
 		}
 		if err := r.Close(); !errors.Is(err, seal.ErrCorrupt) {
 			t.Fatalf("Close after a short read of a tail-corrupt object: err = %v, want ErrCorrupt", err)
+		}
+	})
+
+	// The other half of the one above, and not redundant with it: a Close that
+	// drains the rest of a *clean* object must return nil. Without this, an
+	// implementation that satisfied the previous subtest by returning
+	// ErrCorrupt from every Close after a partial read would pass — and a
+	// caller that correctly checks Close's error would then see every
+	// abandoned download as a corrupt object.
+	t.Run("CloseOfACleanObjectAfterAPartialReadReturnsNil", func(t *testing.T) {
+		s := newSealer(t)
+		dek, addr := streamFixture(t)
+		ciphertext := mustEncryptObject(t, s, dek, addr, patterned(2*seal.FrameSize))
+
+		r, err := s.NewDecryptReader(bytes.NewReader(ciphertext), dek, addr, seal.Unlimited)
+		if err != nil {
+			t.Fatalf("NewDecryptReader: %v", err)
+		}
+		if _, err := r.Read(make([]byte, 10)); err != nil {
+			t.Fatalf("Read of the first bytes: %v", err)
+		}
+		if err := r.Close(); err != nil {
+			t.Fatalf("Close after a short read of a clean object: err = %v, want nil", err)
+		}
+	})
+
+	// A write after Close must be refused rather than silently appended to a
+	// stream whose final frame is already sealed — which would produce a
+	// ciphertext that is longer than the object it claims to hold and that no
+	// reader can open. The record suite asserts the same thing for its writer;
+	// the stream writer's half lived only in internal/framed.
+	t.Run("RefusesAWriteAfterClose", func(t *testing.T) {
+		s := newSealer(t)
+		dek, addr := streamFixture(t)
+
+		var buf bytes.Buffer
+		w, err := s.NewEncryptWriter(&buf, dek, addr)
+		if err != nil {
+			t.Fatalf("NewEncryptWriter: %v", err)
+		}
+		if _, err := w.Write([]byte("the object's only bytes")); err != nil {
+			t.Fatalf("Write: %v", err)
+		}
+		if err := w.Close(); err != nil {
+			t.Fatalf("Close: %v", err)
+		}
+		sealed := buf.Len()
+
+		if _, err := w.Write([]byte("more")); !errors.Is(err, seal.ErrClosed) {
+			t.Errorf("Write after Close: err = %v, want ErrClosed", err)
+		}
+		if buf.Len() != sealed {
+			t.Errorf("the writer appended %d bytes after Close; the stream's final frame was already sealed",
+				buf.Len()-sealed)
 		}
 	})
 

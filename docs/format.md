@@ -115,6 +115,15 @@ Extracted verbatim from `cas/internal/crypto`. Every property below is a bug
 somebody already found, and the tests in `internal/framed/framed_test.go` are
 CAS's, under their own names.
 
+The frame-level properties in **Goals** below are also asserted from outside
+this module, by `sealtest/frames.go`, over a three-frame fixture whose wire
+geometry is measured from the implementation under test rather than read off
+this document — so a consumer's CI holds `seal` to a dropped final frame, a
+dropped interior frame and two swapped frames without importing an internal
+package. What stays in `internal/framed` is everything that needs the layout to
+be *known*: the committed vectors, the test-only frame-size seam, and the range
+reader's I/O accounting.
+
 ### Goals
 
 - Detect truncation (a dropped final frame).
@@ -209,6 +218,36 @@ nothing to defend against) still derives unrelated frame keys. It is also what
 moves the bound on how many streams one DEK may seal out of the nonce space;
 see [Key and nonce management at scale](#key-and-nonce-management-at-scale).
 
+### The DEK check is a security control, not an argument check
+
+**Every entry point rejects a DEK that holds no usable key material with
+`ErrInvalidDEK`, before deriving any key** — `NewEncryptWriter`,
+`NewDecryptReader` and `NewDecryptRangeReader` alike, and the one-shot
+convenience over them. The ordering is the control: a check after derivation
+would already have produced a key, and on the encrypt side a key that has been
+produced is a key something may have been sealed under.
+
+Why it is a security control rather than a courtesy: **HKDF derives a
+usable-looking 32-byte key from a nil or short secret with no error of its
+own.** It is an extract-and-expand over an arbitrary-length input; "empty" is a
+length it accepts. So without this check the failure mode is not a panic or an
+error, it is a stream that encrypts, decrypts and round-trips perfectly under a
+key derived from nothing — and **the salt is stored in the header, in the
+clear, so an attacker who guesses that the secret was empty or short can
+recompute that key exactly.** Real data would be sealed under key material an
+attacker holds, and nothing in the ciphertext would look wrong.
+
+This is now arguably `keyring`'s statement rather than this document's, and it
+is kept here because the reasoning is about *this* construction's salt and
+*this* derivation. `keyring.DEK` makes the length cases unconstructible —
+`validateKeyMaterial` refuses any length but 32 and refuses an all-zero key,
+and the material is unexported with no other constructor — so the 16- and
+33-byte cases the extracted code had to test are no longer representable. What
+remains representable, and is therefore still tested at every entry point, is a
+DEK whose material has been zeroized: the zero value, one already destroyed, or
+one whose shared backing array was destroyed through another copy. No type can
+refuse to represent that, because it is a live value that became empty.
+
 ### Nonce
 
 Frame `i`'s 96-bit GCM nonce is `i` as a big-endian integer, zero-extended to
@@ -252,7 +291,13 @@ below.)
 Binding the *whole* header — not just, say, `frame_size` — is a deliberate
 simplicity choice: it authenticates magic, frame size, and salt together, with
 one mechanism, so there is no "which header fields are covered by what"
-question for the next person to work out.
+question for the next person to work out. **A version that bound only some
+fields would need its own justification per field; binding all of it needs
+none.** That is the argument, and it is the one to re-make rather than relitigate
+when somebody proposes narrowing the binding for performance: the cost of
+binding 25 bytes instead of 4 is a hash of 21 extra bytes per frame, and the
+cost of narrowing it is a per-field security argument that has to be rewritten
+every time the header changes.
 
 This is what makes the format's core guarantees hold:
 
@@ -271,6 +316,42 @@ This is what makes the format's core guarantees hold:
   inserting it into another object of the same tenant) is detected because the
   object component is part of the AAD. The same reasoning covers cross-tenant
   replay via the tenant component.
+
+#### `ObjectAddress` is opaque to `seal`, and the uniqueness premise is the consumer's
+
+The splicing argument above says a frame fails against *another address's* AAD.
+It does not say a frame fails against another *object's* AAD, and the gap
+between those two sentences is an obligation this module cannot discharge.
+
+`seal.ObjectAddress` takes any two strings the caller will present again. It
+validates each component as safe to bind — non-empty, bounded, valid UTF-8, no
+separators or control characters — and then **never parses, interprets or
+canonicalises either one.** It does not know that an object component is a
+content address, a path, a UUID or a sequence number, and the format is
+deliberately general enough not to care.
+
+`cas/internal/crypto`, which this format is extracted from, could say more,
+because its AAD was a `(TenantID, ContentAddress)` pair of parsed types: its
+no-splicing argument rested on **content addresses being unique per tenant**,
+and could therefore conclude that a frame fails against another blob's AAD
+*regardless of index or finality*. Generalising the address correctly hands
+that premise back to the caller.
+
+So, stated as the obligation it is: **a consumer whose object addresses are not
+unique per tenant has a splicing exposure `seal` cannot close for it.** If two
+distinct objects of one tenant can ever be given the same object component —
+because the component is a mutable storage path, a tier-qualified key, a
+display name, or a content address truncated for brevity — then frames from one
+authenticate against the other's AAD at the same index, and the binding buys
+nothing for that pair. The fix is at the caller: pass a value that is unique
+per tenant and stable for the ciphertext's whole lifetime. CAS passes a content
+address's canonical `<algo>:<hex>` form, which is why the colon is in the
+allowed component set, and records the obligation in its
+`internal/sealconformance` doc comment.
+
+The same applies to the tenant component: `seal` does not know what a tenant
+is, and two tenants that can present the same tenant string are one tenant as
+far as this format is concerned.
 
 ### Decoding and the finality peek
 
@@ -300,6 +381,17 @@ and the correct `final` flag for its true position in the stream. This keeps
 both the I/O and the memory a ranged read costs proportional to the requested
 range, not to the size of the object.
 
+The arithmetic that makes that computation possible is worth stating where it
+is load-bearing rather than leaving to be re-derived from the layout: **every
+frame but the last is exactly `frame_size + 16` bytes on the wire, and the last
+is always the stream's final frame regardless of its length.** Those two facts
+are what let a frame index be computed from a byte offset by division, and what
+let the range reader set each frame's `final` flag without reading ahead. A
+format change that made a frame's wire length vary — compression, a per-frame
+length prefix, a padding scheme — would not merely add a field; it would remove
+the range reader's ability to find a frame at all without scanning, and it
+would do so silently, because a single-frame object would still decrypt.
+
 ### The range reader's integrity depends entirely on a trustworthy `size`
 
 `NewDecryptRangeReader`'s every correctness check — how many frames the stream
@@ -320,6 +412,18 @@ the cost a ranged read exists to avoid paying.
 `TestRangeReader_SizeMustBeAuthoritative_KnownLimitation` pins it so a future
 change that makes the range reader *even less* likely to notice such tampering
 does not slip by unremarked.
+
+So the rule has a threat model behind it, and the threat model is the part that
+tells a caller whether its own source of `size` is good enough: **a caller that
+needs both ranged access and whole-object integrity must source `size` from
+somewhere the data's owner cannot retroactively change to match a truncation —
+typically the metadata row written at upload time, not a `Stat` of the blob at
+read time.** "Authoritative" is not a property of an API that returns a number;
+it is a property of *who can change that number after the bytes were written*.
+A `Stat` against the object store answers with whatever is there now, which is
+exactly what an attacker who can truncate the object also controls, and the two
+calls are indistinguishable at the call site — which is why the reason is
+recorded here and not only the rule.
 
 `size` is also trusted not to be absurd: `numFrames` is computed from it
 without an overflow guard. A caller-supplied `off` and `length`, by contrast,
@@ -698,6 +802,23 @@ happen to agree with a single vector whose only frame has index 0 and
   encrypted at the production `FrameSize`;
 - three frames at a small test-only `frame_size`, covering `final=false`, a
   frame index greater than zero, and a short final frame.
+
+#### What an AAD change does to a vector, and what it does not
+
+Anyone judging a future vector regeneration needs one invariant, and it is the
+one that makes the diff readable: **the AAD affects authentication, not the
+keystream, so an AAD-only change moves every vector's GCM tags and leaves its
+ciphertext body byte-identical.** That is how the regeneration which bound the
+header into the AAD was reviewed — only the tags moved — and it is the test to
+apply to the next one. A regeneration diff in which a ciphertext body changed
+is a change to the key derivation, the nonce, or the plaintext, whatever the
+commit message says; a diff in which only the trailing 16 bytes of each frame
+moved is an AAD change and nothing else.
+
+(The `SEAL1` rename changed both, and had to: the magic is bound into the AAD,
+*and* the HKDF info string changed, which changes the frame key and therefore
+the keystream. A rename that had touched only the magic would have moved the
+tags alone.)
 
 The three-frame vector's discriminating power was verified in CAS directly
 against a decoder built from the format document alone: it rejects a decoder
