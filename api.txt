@@ -108,6 +108,8 @@ const VersionFramed = domain.VersionFramed
 
 package sealtest // sealtest
 
+func NoSecretLeaksInAnyError(t *testing.T, material, plaintext []byte, failures map[string]error)
+
 func NoSecretLeaksInAnyRendering(t *testing.T, v any, material []byte)
 
 func RendersOnlyARedactionMarker(t *testing.T, v any)

@@ -434,6 +434,13 @@ func RunStreamSealerSuite(t *testing.T, newSealer func(t *testing.T) seal.Stream
 			RendersOnlyARedactionMarker(t, v)
 		}
 	})
+
+	// The other half of the leak discipline, and the half nothing here reached
+	// before: a failure path's *error*. The subtest above holds the writer and
+	// the readers to what they print; an error is a different string, built on
+	// a different path, and the one a caller is most likely to log verbatim.
+	// See errleaks.go.
+	runStreamErrorCanary(t, newSealer)
 }
 
 // RunRecordSealerSuite runs the contract every seal.RecordSealer
@@ -750,6 +757,10 @@ func RunRecordSealerSuite(t *testing.T, newSealer func(t *testing.T) seal.Record
 		}
 		RendersOnlyARedactionMarker(t, r)
 	})
+
+	// See runStreamErrorCanary and errleaks.go: the rendering subtest above
+	// says nothing about an error's contents.
+	runRecordErrorCanary(t, newSealer)
 }
 
 // streamFixture returns a fresh DEK, destroyed when the subtest ends, and the
