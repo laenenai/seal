@@ -57,6 +57,30 @@
 // means that default rather than "unbounded" — an unfinished struct literal
 // must not switch a security control off.
 //
+// # There is no DEK constructor here, and that is the decision
+//
+// DEK is keyring.DEK aliased, and nothing in this package builds one. There is
+// no seal.NewDEK and there will not be: generating, wrapping, storing,
+// rotating and destroying key material is keyring's entire subject, and
+// CHARTER.md disclaims all of it. A constructor here would advertise a
+// capability this module must never own, and a caller who reached for it would
+// be left holding a key with nowhere to put it — the wrapped copy, the KEK
+// that wrapped it and the column it lives in are all keyring's.
+//
+// The consequence is stated plainly rather than left to be discovered,
+// because it was discovered: a consumer that generates its own data keys
+// requires keyring directly. That is intended. keyring owning key
+// construction is the point of the split, and a forwarding constructor here
+// would hide a real dependency rather than remove one — the type is keyring's
+// either way, and so are its validation rules and its errors.
+//
+// A consumer that only runs the conformance suites needs no direct keyring
+// require, since the suites build their own DEKs; the moment it writes a test
+// of its own against seal, it would. For that case the fixture is
+// sealtest.NewDEK, in the test-support package that already depends on
+// keyring — which is where a test fixture belongs, rather than in the
+// production API of the module under test.
+//
 // # Wiring it
 //
 //	dek, err := km.UnwrapDEK(ctx, wrapped) // keyring
@@ -105,7 +129,9 @@ type (
 	// DEK is one data encryption key, zeroizable and non-rendering. It is
 	// keyring's type, aliased rather than wrapped, so a DEK a key manager
 	// returns and a seal.DEK are the identical value. This module never
-	// generates, wraps, stores or destroys one.
+	// generates, wraps, stores or destroys one, and offers no constructor for
+	// one — see the package comment's "There is no DEK constructor here" for
+	// what that means for a consumer's go.mod.
 	DEK = keyring.DEK
 
 	// ObjectAddress is what a framed stream's ciphertext is bound to: exactly

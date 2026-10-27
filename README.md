@@ -155,6 +155,25 @@ if err != nil {
 record, err := seal.EncryptRecord(dek, addr, []byte(value), seal.Limits{})
 ```
 
+### There is no `seal.NewDEK`, and a consumer that generates keys requires `keyring` directly
+
+`seal.DEK` is `keyring.DEK` aliased, and nothing in `seal` builds one. That is
+the decision, not an omission: generating, wrapping, storing, rotating and
+destroying key material is `keyring`'s whole subject, and a constructor here
+would advertise a capability this module must never own — a caller who reached
+for it would be left holding a key with nowhere to put it, since the wrapped
+copy, the KEK that wrapped it and the column it lives in are all `keyring`'s. A
+forwarding constructor would hide a real dependency rather than remove one; the
+type is `keyring`'s either way, and so are its validation rules and its errors.
+
+So **a consumer that generates its own data keys has `keyring` in its main
+require block, and that is correct.** One that only runs the conformance suites
+does not, because the suites build their own DEKs — and for the case in
+between, a consumer writing a test of its own against `seal`, the fixture is
+`sealtest.NewDEK(t)`, in the test-support package that already depends on
+`keyring`. A test fixture belongs there rather than in the production API of the
+module under test.
+
 ## What it does not do
 
 Key management, wrapping or custody ([`keyring`](https://github.com/laenenai/keyring),

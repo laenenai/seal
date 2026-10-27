@@ -763,15 +763,46 @@ func RunRecordSealerSuite(t *testing.T, newSealer func(t *testing.T) seal.Record
 	runRecordErrorCanary(t, newSealer)
 }
 
-// streamFixture returns a fresh DEK, destroyed when the subtest ends, and the
-// address every stream subtest binds to.
-func streamFixture(t *testing.T) (seal.DEK, seal.ObjectAddress) {
+// NewDEK returns a fresh DEK for a test, destroyed when t and every subtest
+// under it have finished.
+//
+// It exists because seal's public API has no DEK constructor and deliberately
+// will not get one. Generating, wrapping, storing and destroying key material
+// is keyring's whole subject and CHARTER.md disclaims all of it, so a
+// seal.NewDEK would advertise a capability this module must never own — and a
+// caller that reached for it would end up with a key it has nowhere to put. A
+// consumer encrypting in production gets its DEK from keyring's key manager
+// (UnwrapDEK) and therefore requires keyring directly, which is correct and
+// intended.
+//
+// What that left without an answer is the *test*. CAS found it on adoption
+// day: a module whose production code only runs the conformance suites needs
+// no direct keyring require, because the suites build their own DEKs — but the
+// moment it writes one test of its own against seal it needs keyring in its
+// main require block, and CAS had it direct for exactly one commit before
+// going back to `// indirect`. A test fixture belongs in the test-support
+// package, which already depends on keyring, rather than in the production
+// API. So it is here.
+//
+// The returned DEK holds real random material: this is a fixture, not a
+// stub, and a test that encrypts under a predictable key proves less than it
+// appears to. For a DEK whose material a test must *name* — a leak canary's
+// needle — use keyring.DEKFrom, which is keyring's to provide.
+func NewDEK(t *testing.T) seal.DEK {
 	t.Helper()
 	dek, err := keyring.NewDEK()
 	if err != nil {
 		t.Fatalf("keyring.NewDEK: %v", err)
 	}
 	t.Cleanup(dek.Destroy)
+	return dek
+}
+
+// streamFixture returns a fresh DEK, destroyed when the subtest ends, and the
+// address every stream subtest binds to.
+func streamFixture(t *testing.T) (seal.DEK, seal.ObjectAddress) {
+	t.Helper()
+	dek := NewDEK(t)
 	addr, err := seal.NewObjectAddress("tenant-1", "sha256:"+hexRepeat("ab", 32))
 	if err != nil {
 		t.Fatalf("NewObjectAddress: %v", err)
@@ -783,11 +814,7 @@ func streamFixture(t *testing.T) (seal.DEK, seal.ObjectAddress) {
 // three-component address every record subtest binds to.
 func recordFixture(t *testing.T) (seal.DEK, seal.RecordAddress) {
 	t.Helper()
-	dek, err := keyring.NewDEK()
-	if err != nil {
-		t.Fatalf("keyring.NewDEK: %v", err)
-	}
-	t.Cleanup(dek.Destroy)
+	dek := NewDEK(t)
 	addr, err := seal.NewRecordAddress("graph-1", "fact-1", "salary")
 	if err != nil {
 		t.Fatalf("NewRecordAddress: %v", err)
