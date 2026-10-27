@@ -172,28 +172,37 @@ explicitly; a deployment that raises it has said so.
 
 ## Adoption
 
-Revised 2026-10-24. The previous version of this section sequenced the
+Revised 2026-10-27. The 2026-10-24 version of this section sequenced the
 extraction after CAS's ~2026-11-05 alpha; the owner reordered to implement every
-module before returning to CAS, so the dependency now runs the other way. **This
-module is what blocks CAS's adoption plan at step 4.** Nothing here is waiting
-on CAS's milestone.
+module before returning to CAS, so the dependency ran the other way and this
+module was what blocked CAS's plan at step 4. **That step is done: CAS adopted
+`v0.1.0` on 2026-10-27.** The direction of the dependency now matters in the
+other sense — a release of this module that broke the contract CAS deleted its
+own implementation for fails CAS's build, which is what the suites are for.
 
 | Consumer | State |
 |---|---|
-| cas | **unblocked, swap pending** — CAS's `internal/crypto` is now `seal`'s `internal/framed`. CAS's step 4 is to delete its copy (~1,740 lines including spec and tests) and import this module. `sealtest.RunStreamSealerSuite` runs against CAS's existing implementation, which is what makes the swap a verified substitution rather than a rewrite. The wire format is **not** compatible with CAS's — see above — and that costs nothing to swap because CAS has nothing stored; it does mean the swap must be a cutover and not a dual-read. |
+| cas | **adopted, 2026-10-27** — CAS deleted `internal/crypto` (1,442 lines of Go plus a 298-line format spec) and imports this module; `internal/sealconformance` runs `RunStreamSealerSuite` against `seal.Framed()` and `RunRecordSealerSuite` against `seal.Compact()`. Both passed unchanged on the first attempt, with no shim and no skipped subtest, which is the first time either suite ran from outside this module. The cutover was clean because the wire formats are incompatible and CAS had nothing stored. CAS's adoption is also what produced the accounting under *What is not done*: 11 of its 23 retired tests were reachable from its CI, now 16. |
 | kgs | **unblocked** — the compact record (format version 2) is implemented, with the `(graph, fact id, attribute)` binding its per-attribute encryption needs (its design §23.1, leak channel #17). |
 | acre | not expected |
 
 ### What is not done
 
-- **No release.** There is no tag; a consumer pins a commit until there is one.
+- **`v0.1.0` is tagged and pinned by CAS**, so `api.txt` is a compatibility
+  promise from here on rather than a record of the current surface. Growing it
+  is still a reviewed diff; shrinking it is now a breaking change.
 - **No external review.** The compact record is new code in a module whose
   whole subject is cryptographic construction, and it has had none. The framed
   format has CAS's review history behind it; version 2 has only this module's
   tests.
-- **No consumer has run the suite yet.** Both ports pass against this module's
-  own implementations. "Adopted" is testable and has not yet been tested by
-  anyone but us.
+- **Seven of CAS's 23 retired tests are still unreachable from a consumer's
+  CI**, and each of the seven needs the wire format or the test-only frame-size
+  seam: the committed vectors, an altered in-range `frame_size`, the seam's own
+  bounds check, `frame_size` honoured from a header, lazy per-frame range
+  decryption, a frame count proportional to a range, and the
+  authoritative-`size` known limitation. They run here. A suite that reached
+  them would have to assume a layout, and would then pass for one
+  implementation only.
 
 ## Provenance
 

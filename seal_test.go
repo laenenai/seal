@@ -8,8 +8,6 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/laenenai/keyring"
-
 	"github.com/laenenai/seal"
 	"github.com/laenenai/seal/sealtest"
 )
@@ -155,12 +153,14 @@ func TestNewRecordReader_AcceptsAFileAsADeclaredLength(t *testing.T) {
 	}
 }
 
+// testDEK is sealtest.NewDEK, and it is a one-line forward on purpose: that
+// fixture exists because seal's public API has no DEK constructor and will not
+// get one, so a consumer writing a test of its own against seal needs
+// somewhere to get a key that is not keyring's main require block. Using it
+// here, from a package that is not sealtest, is what keeps the claim honest —
+// a fixture only the suite itself calls is not a fixture a consumer can rely
+// on.
 func testDEK(t *testing.T) seal.DEK {
 	t.Helper()
-	dek, err := keyring.NewDEK()
-	if err != nil {
-		t.Fatalf("keyring.NewDEK: %v", err)
-	}
-	t.Cleanup(dek.Destroy)
-	return dek
+	return sealtest.NewDEK(t)
 }

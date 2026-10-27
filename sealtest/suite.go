@@ -27,20 +27,35 @@
 // a full decrypt, each of the five ceiling rules, and the rendering
 // discipline.
 //
-// What it cannot prove is anything that depends on the wire format, because
-// the port deliberately does not expose one. Dropping a frame from the middle
-// of a stream, swapping two frames, rewriting an in-range frame_size, and
-// decrypting a committed ciphertext are all format-specific, and they live in
-// internal/framed's and internal/compact's own tests — which is where the
-// ported CAS tests and the committed vectors are. A suite that tried to reach
-// them would have to assume a layout, and then it would only ever pass for one
+// What it cannot prove is anything that needs the wire format to be *known*,
+// because the port deliberately does not expose one. Rewriting an in-range
+// frame_size and decrypting a committed ciphertext are format-specific, and
+// they live in internal/framed's and internal/compact's own tests — which is
+// where the ported CAS tests and the committed vectors are. A suite that
+// hardcoded a layout to reach them would only ever pass for one
 // implementation.
 //
 // Two of the assertions here are deliberately stronger than their
 // format-specific counterparts rather than weaker: a bit is flipped at every
 // byte position of a small ciphertext, and the ciphertext is truncated at
-// every length, both of which subsume "drop the final frame" and "flip a byte
-// in the header" without needing to know where either is.
+// every length, both of which subsume "flip a byte in the header" without
+// needing to know where it is.
+//
+// # The frame-level properties, and how they are reached
+//
+// They do not subsume anything that needs a *second* frame, and for a long
+// while nothing here had one: every tamper sweep encrypted 200 bytes against a
+// 1 MiB seal.FrameSize, so every sweep ran over a single-frame stream.
+// Truncating one frame at every length is not a dropped final frame, and
+// flipping every bit of one frame never moves a frame within a stream, so the
+// frame-index binding was reachable only from internal/framed — which no other
+// module can import.
+//
+// frames.go closes that: a three-frame fixture, with a dropped final frame, a
+// dropped interior frame and two swapped frames each a named subtest, over a
+// geometry *measured* from the implementation under test rather than assumed
+// from a layout. Its header comment carries the measurement, the sampling and
+// why the sampling must stay.
 package sealtest
 
 import (
@@ -131,10 +146,18 @@ func RunStreamSealerSuite(t *testing.T, newSealer func(t *testing.T) seal.Stream
 		}
 	})
 
+	// The frame-level properties: a dropped final frame, a dropped interior
+	// frame, two swapped frames, and sampled flip and truncation sweeps over a
+	// three-frame stream. See frames.go, and the package comment above for why
+	// the single-frame sweeps below do not cover them.
+	runMultiFrameSubtests(t, newSealer)
+
 	// A security property, and stronger than picking positions: every byte of
 	// a small ciphertext is flipped in turn, which covers the header, every
 	// tag and every ciphertext byte without the suite needing to know where
-	// any of them sit.
+	// any of them sit. It is a *single-frame* stream, though — 200 bytes
+	// against a 1 MiB frame — so it says nothing about a frame's position in a
+	// stream. That is runMultiFrameSubtests's job.
 	t.Run("DetectsAFlippedBitAnywhere", func(t *testing.T) {
 		s := newSealer(t)
 		dek, addr := streamFixture(t)
@@ -149,9 +172,12 @@ func RunStreamSealerSuite(t *testing.T, newSealer func(t *testing.T) seal.Stream
 		}
 	})
 
-	// A security property. Truncating at every length subsumes "the final
-	// frame was dropped" for any framing, and does not depend on where a frame
-	// boundary falls.
+	// A security property, exhaustive over a single-frame stream: every
+	// truncation of it is refused, without the suite needing to know where a
+	// frame boundary falls. It does not subsume "the stream's final frame was
+	// dropped", because this fixture has only one frame and nothing is left
+	// after dropping it; DetectsADroppedFinalFrame in frames.go is that
+	// property.
 	t.Run("DetectsEveryTruncation", func(t *testing.T) {
 		s := newSealer(t)
 		dek, addr := streamFixture(t)
@@ -215,6 +241,17 @@ func RunStreamSealerSuite(t *testing.T, newSealer func(t *testing.T) seal.Stream
 		}
 		destroyed.Destroy()
 
+		// Every entry point, not only the two that encrypt. A check that runs
+		// before any key is derived is the control — HKDF derives a
+		// usable-looking 32-byte key from an empty secret with no error of its
+		// own, and the salt is public — and a decrypt constructor that skipped
+		// it would derive that key from nothing and then fail to authenticate,
+		// reporting ErrCorrupt for what is actually a destroyed DEK. Checking
+		// only the encrypt side was the third of the three weaknesses CAS
+		// measured in this suite.
+		good := NewDEK(t)
+		ciphertext := mustEncryptObject(t, s, good, addr, patterned(200))
+
 		for name, dek := range map[string]seal.DEK{"zero value": {}, "destroyed": destroyed} {
 			t.Run(name, func(t *testing.T) {
 				if _, err := s.NewEncryptWriter(io.Discard, dek, addr); !errors.Is(err, seal.ErrInvalidDEK) {
@@ -222,6 +259,19 @@ func RunStreamSealerSuite(t *testing.T, newSealer func(t *testing.T) seal.Stream
 				}
 				if _, err := s.EncryptObject(dek, addr, []byte("v"), seal.Limits{}); !errors.Is(err, seal.ErrInvalidDEK) {
 					t.Errorf("EncryptObject: err = %v, want ErrInvalidDEK", err)
+				}
+				if _, err := s.NewDecryptReader(
+					bytes.NewReader(ciphertext), dek, addr, seal.Unlimited,
+				); !errors.Is(err, seal.ErrInvalidDEK) {
+					t.Errorf("NewDecryptReader: err = %v, want ErrInvalidDEK", err)
+				}
+				if _, err := s.NewDecryptRangeReader(
+					bytes.NewReader(ciphertext), int64(len(ciphertext)), dek, addr, 0, 1,
+				); !errors.Is(err, seal.ErrInvalidDEK) {
+					t.Errorf("NewDecryptRangeReader: err = %v, want ErrInvalidDEK", err)
+				}
+				if _, err := s.DecryptObject(dek, addr, ciphertext, seal.Limits{}); !errors.Is(err, seal.ErrInvalidDEK) {
+					t.Errorf("DecryptObject: err = %v, want ErrInvalidDEK", err)
 				}
 			})
 		}
@@ -313,6 +363,60 @@ func RunStreamSealerSuite(t *testing.T, newSealer func(t *testing.T) seal.Stream
 		}
 		if err := r.Close(); !errors.Is(err, seal.ErrCorrupt) {
 			t.Fatalf("Close after a short read of a tail-corrupt object: err = %v, want ErrCorrupt", err)
+		}
+	})
+
+	// The other half of the one above, and not redundant with it: a Close that
+	// drains the rest of a *clean* object must return nil. Without this, an
+	// implementation that satisfied the previous subtest by returning
+	// ErrCorrupt from every Close after a partial read would pass — and a
+	// caller that correctly checks Close's error would then see every
+	// abandoned download as a corrupt object.
+	t.Run("CloseOfACleanObjectAfterAPartialReadReturnsNil", func(t *testing.T) {
+		s := newSealer(t)
+		dek, addr := streamFixture(t)
+		ciphertext := mustEncryptObject(t, s, dek, addr, patterned(2*seal.FrameSize))
+
+		r, err := s.NewDecryptReader(bytes.NewReader(ciphertext), dek, addr, seal.Unlimited)
+		if err != nil {
+			t.Fatalf("NewDecryptReader: %v", err)
+		}
+		if _, err := r.Read(make([]byte, 10)); err != nil {
+			t.Fatalf("Read of the first bytes: %v", err)
+		}
+		if err := r.Close(); err != nil {
+			t.Fatalf("Close after a short read of a clean object: err = %v, want nil", err)
+		}
+	})
+
+	// A write after Close must be refused rather than silently appended to a
+	// stream whose final frame is already sealed — which would produce a
+	// ciphertext that is longer than the object it claims to hold and that no
+	// reader can open. The record suite asserts the same thing for its writer;
+	// the stream writer's half lived only in internal/framed.
+	t.Run("RefusesAWriteAfterClose", func(t *testing.T) {
+		s := newSealer(t)
+		dek, addr := streamFixture(t)
+
+		var buf bytes.Buffer
+		w, err := s.NewEncryptWriter(&buf, dek, addr)
+		if err != nil {
+			t.Fatalf("NewEncryptWriter: %v", err)
+		}
+		if _, err := w.Write([]byte("the object's only bytes")); err != nil {
+			t.Fatalf("Write: %v", err)
+		}
+		if err := w.Close(); err != nil {
+			t.Fatalf("Close: %v", err)
+		}
+		sealed := buf.Len()
+
+		if _, err := w.Write([]byte("more")); !errors.Is(err, seal.ErrClosed) {
+			t.Errorf("Write after Close: err = %v, want ErrClosed", err)
+		}
+		if buf.Len() != sealed {
+			t.Errorf("the writer appended %d bytes after Close; the stream's final frame was already sealed",
+				buf.Len()-sealed)
 		}
 	})
 
@@ -408,6 +512,13 @@ func RunStreamSealerSuite(t *testing.T, newSealer func(t *testing.T) seal.Stream
 			RendersOnlyARedactionMarker(t, v)
 		}
 	})
+
+	// The other half of the leak discipline, and the half nothing here reached
+	// before: a failure path's *error*. The subtest above holds the writer and
+	// the readers to what they print; an error is a different string, built on
+	// a different path, and the one a caller is most likely to log verbatim.
+	// See errleaks.go.
+	runStreamErrorCanary(t, newSealer)
 }
 
 // RunRecordSealerSuite runs the contract every seal.RecordSealer
@@ -724,17 +835,52 @@ func RunRecordSealerSuite(t *testing.T, newSealer func(t *testing.T) seal.Record
 		}
 		RendersOnlyARedactionMarker(t, r)
 	})
+
+	// See runStreamErrorCanary and errleaks.go: the rendering subtest above
+	// says nothing about an error's contents.
+	runRecordErrorCanary(t, newSealer)
 }
 
-// streamFixture returns a fresh DEK, destroyed when the subtest ends, and the
-// address every stream subtest binds to.
-func streamFixture(t *testing.T) (seal.DEK, seal.ObjectAddress) {
+// NewDEK returns a fresh DEK for a test, destroyed when t and every subtest
+// under it have finished.
+//
+// It exists because seal's public API has no DEK constructor and deliberately
+// will not get one. Generating, wrapping, storing and destroying key material
+// is keyring's whole subject and CHARTER.md disclaims all of it, so a
+// seal.NewDEK would advertise a capability this module must never own — and a
+// caller that reached for it would end up with a key it has nowhere to put. A
+// consumer encrypting in production gets its DEK from keyring's key manager
+// (UnwrapDEK) and therefore requires keyring directly, which is correct and
+// intended.
+//
+// What that left without an answer is the *test*. CAS found it on adoption
+// day: a module whose production code only runs the conformance suites needs
+// no direct keyring require, because the suites build their own DEKs — but the
+// moment it writes one test of its own against seal it needs keyring in its
+// main require block, and CAS had it direct for exactly one commit before
+// going back to `// indirect`. A test fixture belongs in the test-support
+// package, which already depends on keyring, rather than in the production
+// API. So it is here.
+//
+// The returned DEK holds real random material: this is a fixture, not a
+// stub, and a test that encrypts under a predictable key proves less than it
+// appears to. For a DEK whose material a test must *name* — a leak canary's
+// needle — use keyring.DEKFrom, which is keyring's to provide.
+func NewDEK(t *testing.T) seal.DEK {
 	t.Helper()
 	dek, err := keyring.NewDEK()
 	if err != nil {
 		t.Fatalf("keyring.NewDEK: %v", err)
 	}
 	t.Cleanup(dek.Destroy)
+	return dek
+}
+
+// streamFixture returns a fresh DEK, destroyed when the subtest ends, and the
+// address every stream subtest binds to.
+func streamFixture(t *testing.T) (seal.DEK, seal.ObjectAddress) {
+	t.Helper()
+	dek := NewDEK(t)
 	addr, err := seal.NewObjectAddress("tenant-1", "sha256:"+hexRepeat("ab", 32))
 	if err != nil {
 		t.Fatalf("NewObjectAddress: %v", err)
@@ -746,11 +892,7 @@ func streamFixture(t *testing.T) (seal.DEK, seal.ObjectAddress) {
 // three-component address every record subtest binds to.
 func recordFixture(t *testing.T) (seal.DEK, seal.RecordAddress) {
 	t.Helper()
-	dek, err := keyring.NewDEK()
-	if err != nil {
-		t.Fatalf("keyring.NewDEK: %v", err)
-	}
-	t.Cleanup(dek.Destroy)
+	dek := NewDEK(t)
 	addr, err := seal.NewRecordAddress("graph-1", "fact-1", "salary")
 	if err != nil {
 		t.Fatalf("NewRecordAddress: %v", err)
