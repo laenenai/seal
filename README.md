@@ -7,7 +7,7 @@ Encrypts and decrypts opaque bytes under a caller-supplied data key, in a
 versioned, vector-pinned format whose ciphertext is bound to the one place it
 belongs — so a value cannot be spliced or relocated and still decrypt.
 
-> **Status: `v0.1.0` is tagged and adopted by one consumer; there is no
+> **Status: `v0.2.0` is tagged; CAS adopted `v0.1.0`, and there is no
 > external review.**
 >
 > **In, and tested:** the framed stream (format version 1), extracted from
@@ -42,10 +42,11 @@ belongs — so a value cannot be spliced or relocated and still decrypt.
 > **Deliberately out of scope in this pass**, each noted here rather than left
 > to be discovered:
 >
-> - **Tagged, which changes what `api.txt` is.** `v0.1.0` is released and CAS
->   pins it, so the surface in that file is a compatibility promise from here
->   on rather than a snapshot: growing it is a reviewed diff, shrinking it is a
->   breaking change.
+> - **Tagged, which makes compatibility a release concern.** `v0.2.0` is the
+>   current tag and CAS pins `v0.1.0`. The importable API is compared with
+>   `apidiff` against the last root tag (`mise run api-diff`); pre-1.0
+>   incompatible changes are reported and recorded in `CHANGELOG.md` and
+>   `UPGRADING.md`. `gorelease` validates a clean tagged release.
 > - **No external security review.** The framed format carries CAS's review
 >   history; **format version 2 is new code in a module whose whole subject is
 >   cryptographic construction, and nobody outside this work has looked at
@@ -197,13 +198,17 @@ the bytes mean; the data key's lifecycle; policy of any kind.
 - [`docs/format.md`](docs/format.md) — the committed wire format for both versions, the version registry, the naming decision, the nonce arithmetic, and the test-vector rule
 - [`SECURITY.md`](SECURITY.md)
 - [`CONVENTIONS.md`](CONVENTIONS.md)
-- `api.txt` — the public surface as a golden file, diffed in CI
+- [`CHANGELOG.md`](CHANGELOG.md) — release history and tooling changes
+- [`UPGRADING.md`](UPGRADING.md) — migration steps for breaking changes
+- [`scripts/api-diff.sh`](scripts/api-diff.sh) — apidiff comparison against the last root tag
 
 ## Running the tests
 
     mise run test       # the inner loop
     mise run test-all   # everything, with the race detector
-    mise run check      # the gate: fmt-check, lint, build, test-all
+    mise run api-diff   # compare the importable API with the last tag
+    mise run vuln       # govulncheck
+    mise run check      # the gate: fmt-check, lint, build, test-all, generate-check, vuln, api-diff
 
 There are no containers and no database: this module performs no I/O. `-short`
 is honoured as a runtime decision in the two subtests that sweep a property

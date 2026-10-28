@@ -188,9 +188,11 @@ own implementation for fails CAS's build, which is what the suites are for.
 
 ### What is not done
 
-- **`v0.1.0` is tagged and pinned by CAS**, so `api.txt` is a compatibility
-  promise from here on rather than a record of the current surface. Growing it
-  is still a reviewed diff; shrinking it is now a breaking change.
+- **`v0.1.0` is tagged and pinned by CAS; `v0.2.0` is the current release.**
+  The importable API is compared with `apidiff` against the last root tag
+  (`mise run api-diff`). Pre-1.0 incompatible changes are reported and recorded
+  in `CHANGELOG.md` and `UPGRADING.md`; `gorelease` validates a clean tagged
+  release. There is no golden `api.txt` compatibility file.
 - **No external review.** The compact record is new code in a module whose
   whole subject is cryptographic construction, and it has had none. The framed
   format has CAS's review history behind it; version 2 has only this module's
