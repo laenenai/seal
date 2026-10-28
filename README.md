@@ -167,6 +167,19 @@ if err != nil {
 record, err := seal.EncryptRecord(dek, addr, []byte(value), seal.Limits{})
 ```
 
+## Examples
+
+Runnable examples cover compact records, streaming blobs, ranged reads, and
+running the conformance suites. See [`examples/README.md`](examples/README.md)
+for the use-case guide and best practices.
+
+```bash
+go run ./examples/records
+go run ./examples/streaming
+go run ./examples/range
+go test ./examples/conformance
+```
+
 ### There is no `seal.NewDEK`, and a consumer that generates keys requires `keyring` directly
 
 `seal.DEK` is `keyring.DEK` aliased, and nothing in `seal` builds one. That is
@@ -195,6 +208,7 @@ the bytes mean; the data key's lifecycle; policy of any kind.
 ## Documentation
 
 - [`CHARTER.md`](CHARTER.md) — the boundary, the properties preserved verbatim from the extracted format, the five ceiling rules, and the adoption state
+- [`examples/README.md`](examples/README.md) — runnable use cases and best practices
 - [`docs/format.md`](docs/format.md) — the committed wire format for both versions, the version registry, the naming decision, the nonce arithmetic, and the test-vector rule
 - [`SECURITY.md`](SECURITY.md)
 - [`CONVENTIONS.md`](CONVENTIONS.md)

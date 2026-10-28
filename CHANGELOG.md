@@ -33,6 +33,14 @@ format or the importable Go API.
   only in `mise.toml`; the workflow no longer pins gofumpt or golangci-lint a
   second time.
 
+### Examples and docs
+
+- Added `examples/` with runnable compact-record, streaming, ranged-read, and
+  conformance-suite examples, plus `examples/README.md` covering use-case
+  selection and best practices.
+- Added godoc examples for `EncryptRecord`, `NewDecryptReader`, and
+  `NewDecryptRangeReader`; `go test` compiles and runs them.
+
 ## v0.2.0 — 2026-10-27
 
 - Additive conformance-suite coverage: a three-frame fixture now reaches a
