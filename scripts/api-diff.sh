@@ -29,11 +29,34 @@ git archive "${base}" | tar -x -C "${work}"
 base_export="${work}/base.export"
 new_export="${work}/new.export"
 
+# Module-mode apidiff includes every package under the module, including
+# examples/* command packages. Examples are documentation, not part of the
+# public contract, so drop them from both export files before comparing.
+filter_examples() {
+  python3 - "$1" "${module}" <<'PY'
+import os
+import sys
+import zipfile
+
+path, module = sys.argv[1], sys.argv[2]
+prefix = module + "/examples/"
+tmp = path + ".filtered"
+with zipfile.ZipFile(path) as src, zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as dst:
+    for info in src.infolist():
+        if info.filename.startswith(prefix):
+            continue
+        dst.writestr(info, src.read(info.filename))
+os.replace(tmp, path)
+PY
+}
+
 (
   cd "${work}"
   GOFLAGS=-mod=mod go run "${tool}" -m -w "${base_export}" "${module}"
 )
 go run "${tool}" -m -w "${new_export}" "${module}"
+filter_examples "${base_export}"
+filter_examples "${new_export}"
 
 set +e
 report="$(go run "${tool}" -m "${base_export}" "${new_export}" 2>&1)"
