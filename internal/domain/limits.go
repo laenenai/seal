@@ -217,12 +217,19 @@ func DerivableLength(r io.Reader) (int64, bool) {
 		Stat() (fs.FileInfo, error)
 	}); ok {
 		if info, err := st.Stat(); err == nil && info.Mode().IsRegular() {
-			if s, isSeeker := r.(io.Seeker); isSeeker {
-				if cur, seekErr := s.Seek(0, io.SeekCurrent); seekErr == nil {
-					return info.Size() - cur, true
-				}
+			s, isSeeker := r.(io.Seeker)
+			if !isSeeker {
+				return 0, false
 			}
-			return info.Size(), true
+			cur, seekErr := s.Seek(0, io.SeekCurrent)
+			if seekErr != nil {
+				return 0, false
+			}
+			remaining := info.Size() - cur
+			if remaining < 0 {
+				return 0, false
+			}
+			return remaining, true
 		}
 	}
 	if s, ok := r.(io.Seeker); ok {
@@ -235,6 +242,9 @@ func DerivableLength(r io.Reader) (int64, bool) {
 			return 0, false
 		}
 		if _, err := s.Seek(cur, io.SeekStart); err != nil {
+			return 0, false
+		}
+		if end < cur {
 			return 0, false
 		}
 		return end - cur, true

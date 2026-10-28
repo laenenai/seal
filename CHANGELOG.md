@@ -13,6 +13,13 @@ format or the importable Go API.
 
 - None. `apidiff` against `v0.2.0` reports no incompatible API changes.
 
+### Security and correctness
+
+- `NewRecordReader` now fails closed when a reader reports a negative or
+  otherwise unusable derived length, checks the plaintext ceiling against the
+  declared ciphertext length before allocating or reading, and rejects trailing
+  bytes after the declared record. No API change.
+
 ### Tooling
 
 - **Removed the `api.txt` golden-file pattern.** `api.txt`, `api_test.go`,
