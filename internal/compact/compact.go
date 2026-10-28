@@ -52,6 +52,7 @@ import (
 	"crypto/hkdf"
 	"crypto/rand"
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -310,9 +311,9 @@ type reader struct {
 // in r, bound to addr and sealed under dek.
 //
 // It is the fail-closed entry point. If either ceiling is in force, r's length
-// must be establishable without reading it — a Len method, a Stat, or a Seek
-// to the end — and an r that cannot say is refused with
-// domain.ErrUnknownLength. That is deliberately the same rule as CAS §9.2's
+// must be establishable without reading it — a Len method, a Stat plus Seek on
+// a regular file, or a Seek to the end — and an r that cannot say is refused
+// with domain.ErrUnknownLength. That is deliberately the same rule as CAS §9.2's
 // MaxContentLength caveat: a chunked upload with no declared size is refused
 // when a limit caveat exists. Discovering the length by reading until the
 // ceiling is hit would be the allocation-bomb pattern with extra steps.
@@ -324,7 +325,9 @@ type reader struct {
 // The record is read and authenticated here, at construction, not lazily on
 // first Read. There is nothing to be lazy about — one tag covers the whole
 // value — and surfacing the failure from the constructor means a caller cannot
-// hold a Reader that is going to fail.
+// hold a Reader that is going to fail. The declared length must cover exactly
+// one record; trailing bytes are refused with domain.ErrCorrupt, and the
+// reader may perform one extra read to establish EOF.
 func NewReader(
 	r io.Reader, dek keyring.DEK, addr domain.RecordAddress, limits domain.Resolved,
 ) (io.Reader, error) {
@@ -364,8 +367,8 @@ func NewReader(
 	return &reader{plain: plain}, nil
 }
 
-// readAll reads r to EOF, pre-sizing the buffer from declared when a length
-// was established and refusing anything beyond it.
+// readAll reads exactly declared bytes and verifies there is no more, or
+// reads r to EOF when declared is negative.
 func readAll(r io.Reader, declared int64) ([]byte, error) {
 	if declared < 0 {
 		b, err := io.ReadAll(r)
@@ -376,6 +379,9 @@ func readAll(r io.Reader, declared int64) ([]byte, error) {
 	}
 	buf := make([]byte, declared)
 	if _, err := io.ReadFull(r, buf); err != nil {
+		if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+			return nil, domain.ErrCorrupt
+		}
 		return nil, fmt.Errorf("seal: read record: %w", err)
 	}
 	// A declared length is a claim about one record, not a prefix size. If

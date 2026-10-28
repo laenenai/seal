@@ -7,10 +7,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log/slog"
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/laenenai/keyring"
 
@@ -531,6 +533,53 @@ func (c *countingReader) Read(p []byte) (int, error) {
 	return n, err
 }
 
+type fakeFileInfo struct {
+	size int64
+}
+
+func (f fakeFileInfo) Name() string       { return "fake" }
+func (f fakeFileInfo) Size() int64        { return f.size }
+func (f fakeFileInfo) Mode() fs.FileMode  { return 0 }
+func (f fakeFileInfo) ModTime() time.Time { return time.Time{} }
+func (f fakeFileInfo) IsDir() bool        { return false }
+func (f fakeFileInfo) Sys() any           { return nil }
+
+// negativeStatReader reports a regular file with a size smaller than its
+// current offset, which makes the derived remaining length negative while it
+// still serves bytes.
+type negativeStatReader struct {
+	data []byte
+	off  int64
+	size int64
+	read int64
+}
+
+func (r *negativeStatReader) Read(p []byte) (int, error) {
+	if r.off >= int64(len(r.data)) {
+		return 0, io.EOF
+	}
+	n := copy(p, r.data[r.off:])
+	r.off += int64(n)
+	r.read += int64(n)
+	return n, nil
+}
+
+func (r *negativeStatReader) Stat() (fs.FileInfo, error) { return fakeFileInfo{size: r.size}, nil }
+
+func (r *negativeStatReader) Seek(offset int64, whence int) (int64, error) {
+	switch whence {
+	case io.SeekStart:
+		r.off = offset
+	case io.SeekCurrent:
+		r.off += offset
+	case io.SeekEnd:
+		r.off = int64(len(r.data)) + offset
+	default:
+		return 0, errors.New("bad whence")
+	}
+	return r.off, nil
+}
+
 func TestWriterAndReader_RoundTrip(t *testing.T) {
 	dek := testDEK(t)
 	addr := testAddress(t, "graph-1", "fact-1", "salary")
@@ -576,21 +625,30 @@ func TestNewReader_FailsClosedOnANegativeDerivedLength(t *testing.T) {
 		t.Fatalf("Seal: %v", err)
 	}
 
-	path := t.TempDir() + "/record"
-	if err := os.WriteFile(path, record, 0o600); err != nil {
-		t.Fatalf("WriteFile: %v", err)
+	// Stat reports 10 bytes, but the current offset is 100: the derived
+	// remaining length is negative. The reader still serves bytes, so the old
+	// code would fall through to an unbounded io.ReadAll.
+	reader := &negativeStatReader{data: record, off: 100, size: 10}
+	if _, err := compact.NewReader(reader, dek, addr, limits); !errors.Is(err, domain.ErrUnknownLength) {
+		t.Fatalf("NewReader with a negative derived length: err = %v, want ErrUnknownLength", err)
 	}
-	f, err := os.Open(path) //nolint:gosec // a path this test just wrote inside t.TempDir()
+	if reader.read != 0 {
+		t.Fatalf("NewReader read %d bytes from a negative derived length; it must fail closed before reading", reader.read)
+	}
+}
+
+func TestNewReader_RefusesAnOverReportedLength(t *testing.T) {
+	dek := testDEK(t)
+	addr := testAddress(t, "graph-1", "fact-1", "salary")
+	limits := defaultLimits(t)
+	record, err := compact.Seal(dek, addr, []byte("value"), limits)
 	if err != nil {
-		t.Fatalf("Open: %v", err)
-	}
-	defer f.Close() //nolint:errcheck // read-only handle in a test
-	if _, err := f.Seek(100, io.SeekStart); err != nil {
-		t.Fatalf("Seek: %v", err)
+		t.Fatalf("Seal: %v", err)
 	}
 
-	if _, err := compact.NewReader(f, dek, addr, limits); !errors.Is(err, domain.ErrUnknownLength) {
-		t.Fatalf("NewReader with a negative derived length: err = %v, want ErrUnknownLength", err)
+	reader := &countingReader{r: bytes.NewReader(record), n: int64(len(record) + 10)}
+	if _, err := compact.NewReader(reader, dek, addr, limits); !errors.Is(err, domain.ErrCorrupt) {
+		t.Fatalf("NewReader with an over-reported length: err = %v, want ErrCorrupt", err)
 	}
 }
 

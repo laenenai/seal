@@ -4,11 +4,13 @@ import (
 	"bytes"
 	"errors"
 	"io"
+	"io/fs"
 	"math"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/laenenai/seal/internal/domain"
 )
@@ -352,6 +354,23 @@ func TestDerivableLength(t *testing.T) {
 		}
 	})
 
+	t.Run("a Stat-only regular file cannot establish its remaining length", func(t *testing.T) {
+		s := &statOnly{data: payload, size: int64(len(payload))}
+		if n, ok := domain.DerivableLength(s); ok {
+			t.Fatalf("a Stat-only regular file reported a length of %d; a ceiling must fail closed on it", n)
+		}
+	})
+
+	t.Run("a Seeker positioned past EOF cannot report a negative length", func(t *testing.T) {
+		s := &seekerOnly{data: payload}
+		if _, err := s.Seek(100, io.SeekStart); err != nil {
+			t.Fatalf("Seek: %v", err)
+		}
+		if n, ok := domain.DerivableLength(s); ok {
+			t.Fatalf("a Seeker positioned past EOF reported a length of %d; a ceiling must fail closed on it", n)
+		}
+	})
+
 	t.Run("a bare Seeker, left where it was found", func(t *testing.T) {
 		s := &seekerOnly{data: payload}
 		if _, err := s.Read(make([]byte, 3)); err != nil {
@@ -393,6 +412,36 @@ func (s *seekerOnly) Read(p []byte) (int, error) {
 	s.off += int64(n)
 	return n, nil
 }
+
+// statOnly is a regular-file-shaped reader with Stat but no Seek, so its
+// remaining length cannot be established.
+type statOnly struct {
+	data []byte
+	off  int64
+	size int64
+}
+
+func (s *statOnly) Read(p []byte) (int, error) {
+	if s.off >= int64(len(s.data)) {
+		return 0, io.EOF
+	}
+	n := copy(p, s.data[s.off:])
+	s.off += int64(n)
+	return n, nil
+}
+
+func (s *statOnly) Stat() (fs.FileInfo, error) { return fileInfo{s.size}, nil }
+
+type fileInfo struct {
+	size int64
+}
+
+func (f fileInfo) Name() string       { return "fake" }
+func (f fileInfo) Size() int64        { return f.size }
+func (f fileInfo) Mode() fs.FileMode  { return 0 }
+func (f fileInfo) ModTime() time.Time { return time.Time{} }
+func (f fileInfo) IsDir() bool        { return false }
+func (f fileInfo) Sys() any           { return nil }
 
 func (s *seekerOnly) Seek(offset int64, whence int) (int64, error) {
 	switch whence {

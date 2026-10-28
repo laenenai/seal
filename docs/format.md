@@ -689,9 +689,11 @@ rather than a courtesy.
    `ErrUnknownLength`. Deliberately the same rule as CAS §9.2's
    `MaxContentLength` caveat, which fails closed on an unknown length: a
    chunked upload with no declared size is refused when a limit caveat exists.
-   The length probe accepts a `Len` method, a `Stat` on a regular file, or a
-   `Seek` to the end; a network connection, an HTTP body or a pipe cannot say,
-   and is refused rather than read.
+   The length probe accepts a `Len` method, a `Stat` plus `Seek` on a regular
+   file, or a `Seek` to the end; a network connection, an HTTP body or a pipe
+   cannot say, and is refused rather than read. A declared length must cover
+   exactly one compact record: trailing bytes are refused with `ErrCorrupt`,
+   and the reader may perform one extra read to establish EOF.
 4. **A typed error naming the limit**, never a truncated or partial result.
    `*LimitError` names which ceiling and both numbers, and matches
    `ErrLimitExceeded`. A refused call returns **no** bytes: a partial plaintext
@@ -743,9 +745,10 @@ nobody arrives at by forgetting.
 ## Errors
 
 - **`ErrCorrupt`** — a ciphertext authentication failure: a flipped bit, a
-  dropped or reordered frame, a truncated stream, a tampered header, a record
-  relocated to another address, an unrecognised format version byte, or an
-  address that does not match what the ciphertext was sealed under. **It never
+  dropped or reordered frame, a truncated stream, trailing bytes after a
+  declared compact record, a tampered header, a record relocated to another
+  address, an unrecognised format version byte, or an address that does not
+  match what the ciphertext was sealed under. **It never
   carries detail about which**, because naming the failing check hands an
   attacker a dimension to search along. In particular, "this is a version 1
   stream, not a version 2 record" is *not* reported as such.

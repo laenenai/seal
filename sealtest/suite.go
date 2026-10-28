@@ -774,6 +774,9 @@ func RunRecordSealerSuite(t *testing.T, newSealer func(t *testing.T) seal.Record
 		if _, err := s.NewRecordReader(negative, dek, addr, seal.Limits{}); !errors.Is(err, seal.ErrUnknownLength) {
 			t.Fatalf("NewRecordReader with a negative declared length: err = %v, want ErrUnknownLength", err)
 		}
+		if negative.read != 0 {
+			t.Fatalf("NewRecordReader read %d bytes from a negative declared length; it must fail closed before reading", negative.read)
+		}
 
 		// A declared length is a claim about one record. If the reader holds
 		// more, the declared record is only a prefix and must not be accepted.
@@ -783,6 +786,33 @@ func RunRecordSealerSuite(t *testing.T, newSealer func(t *testing.T) seal.Record
 		}
 		if _, err := s.NewRecordReader(trailing, dek, addr, seal.Limits{}); !errors.Is(err, seal.ErrCorrupt) {
 			t.Fatalf("NewRecordReader with trailing data: err = %v, want ErrCorrupt", err)
+		}
+
+		// A reader may over-report its length too. A truncated declaration is
+		// corrupt input, not a transport error the caller should have to
+		// classify separately.
+		overreported := &declaredLengthReader{b: record, declared: len(record) + 10}
+		if _, err := s.NewRecordReader(overreported, dek, addr, seal.Limits{}); !errors.Is(err, seal.ErrCorrupt) {
+			t.Fatalf("NewRecordReader with an over-reported length: err = %v, want ErrCorrupt", err)
+		}
+
+		// The plaintext ceiling still applies when MaxCiphertext is Unlimited.
+		// The check must happen against the declared length before allocation
+		// or reading, not after the record has been read and opened.
+		oversized := &declaredLengthReader{b: make([]byte, 10<<20), declared: 10 << 20}
+		_, err = s.NewRecordReader(oversized, dek, addr, seal.Limits{
+			MaxPlaintext:  1024,
+			MaxCiphertext: seal.Unlimited,
+		})
+		if !errors.Is(err, seal.ErrLimitExceeded) {
+			t.Fatalf("NewRecordReader with an oversized declared length: err = %v, want ErrLimitExceeded", err)
+		}
+		var limitErr *seal.LimitError
+		if !errors.As(err, &limitErr) || limitErr.Limit != "max plaintext" {
+			t.Fatalf("NewRecordReader with an oversized declared length: err = %v, want a *LimitError naming max plaintext", err)
+		}
+		if oversized.read != 0 {
+			t.Fatalf("NewRecordReader read %d bytes before the plaintext ceiling refusal; it must check before allocating or reading", oversized.read)
 		}
 	})
 
@@ -977,6 +1007,7 @@ type declaredLengthReader struct {
 	b        []byte
 	declared int
 	off      int
+	read     int
 }
 
 func (r *declaredLengthReader) Len() int { return r.declared }
@@ -987,6 +1018,7 @@ func (r *declaredLengthReader) Read(p []byte) (int, error) {
 	}
 	n := copy(p, r.b[r.off:])
 	r.off += n
+	r.read += n
 	return n, nil
 }
 

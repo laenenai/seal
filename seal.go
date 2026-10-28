@@ -476,16 +476,18 @@ func NewRecordWriter(w io.Writer, dek DEK, addr RecordAddress, limits Limits) (i
 // record in r.
 //
 // It is the fail-closed entry point. If either ceiling is in force, r's length
-// must be establishable without reading it — a Len method, a Stat, or a Seek
-// to the end — and an r that cannot say is refused with ErrUnknownLength
-// rather than read until the ceiling is hit. A caller whose source genuinely
+// must be establishable without reading it — a Len method, a Stat plus Seek on
+// a regular file, or a Seek to the end — and an r that cannot say is refused
+// with ErrUnknownLength rather than read until the ceiling is hit. A caller whose source genuinely
 // cannot declare its length has two honest options and no third: read it
 // itself and call DecryptRecord with the bytes it actually got, or pass
 // Unlimited and have said so.
 //
 // The record is read and authenticated here rather than lazily on first Read:
 // one tag covers the whole value, so there is nothing to be lazy about, and a
-// caller cannot be handed a Reader that is going to fail.
+// caller cannot be handed a Reader that is going to fail. The declared length
+// must cover exactly one record; trailing bytes are refused with ErrCorrupt,
+// and the reader may perform one extra read to establish EOF.
 func NewRecordReader(r io.Reader, dek DEK, addr RecordAddress, limits Limits) (io.Reader, error) {
 	resolved, err := limits.ResolveCompact()
 	if err != nil {
