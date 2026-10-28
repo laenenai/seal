@@ -567,6 +567,67 @@ func TestWriterAndReader_RoundTrip(t *testing.T) {
 	}
 }
 
+func TestNewReader_FailsClosedOnANegativeDerivedLength(t *testing.T) {
+	dek := testDEK(t)
+	addr := testAddress(t, "graph-1", "fact-1", "salary")
+	limits := defaultLimits(t)
+	record, err := compact.Seal(dek, addr, []byte("value"), limits)
+	if err != nil {
+		t.Fatalf("Seal: %v", err)
+	}
+
+	path := t.TempDir() + "/record"
+	if err := os.WriteFile(path, record, 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	f, err := os.Open(path) //nolint:gosec // a path this test just wrote inside t.TempDir()
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer f.Close() //nolint:errcheck // read-only handle in a test
+	if _, err := f.Seek(100, io.SeekStart); err != nil {
+		t.Fatalf("Seek: %v", err)
+	}
+
+	if _, err := compact.NewReader(f, dek, addr, limits); !errors.Is(err, domain.ErrUnknownLength) {
+		t.Fatalf("NewReader with a negative derived length: err = %v, want ErrUnknownLength", err)
+	}
+}
+
+func TestNewReader_RefusesTrailingData(t *testing.T) {
+	dek := testDEK(t)
+	addr := testAddress(t, "graph-1", "fact-1", "salary")
+	limits := defaultLimits(t)
+	record, err := compact.Seal(dek, addr, []byte("value"), limits)
+	if err != nil {
+		t.Fatalf("Seal: %v", err)
+	}
+
+	data := append(append([]byte{}, record...), []byte("trailing")...)
+	reader := &countingReader{r: bytes.NewReader(data), n: int64(len(record))}
+	if _, err := compact.NewReader(reader, dek, addr, limits); !errors.Is(err, domain.ErrCorrupt) {
+		t.Fatalf("NewReader with trailing data: err = %v, want ErrCorrupt", err)
+	}
+}
+
+func TestNewReader_ChecksThePlaintextCeilingBeforeAllocation(t *testing.T) {
+	dek := testDEK(t)
+	addr := testAddress(t, "graph-1", "fact-1", "salary")
+	limits, err := domain.Limits{MaxPlaintext: 1024, MaxCiphertext: domain.Unlimited}.ResolveCompact()
+	if err != nil {
+		t.Fatalf("ResolveCompact: %v", err)
+	}
+
+	const declared = 10 << 20
+	reader := &countingReader{r: bytes.NewReader(make([]byte, declared)), n: declared}
+	if _, err := compact.NewReader(reader, dek, addr, limits); !errors.Is(err, domain.ErrLimitExceeded) {
+		t.Fatalf("NewReader with an oversized declared length: err = %v, want ErrLimitExceeded", err)
+	}
+	if reader.read != 0 {
+		t.Fatalf("the refusal read %d bytes; the plaintext ceiling must be checked before allocation and reading", reader.read)
+	}
+}
+
 // TestNoRenderingOfACompactTypeDisclosesItsMaterial covers the leak channel
 // the streaming shapes would otherwise have: the writer holds the whole
 // plaintext and the reader holds the whole decrypted plaintext, both in

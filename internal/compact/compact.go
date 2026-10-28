@@ -335,12 +335,20 @@ func NewReader(
 	var declared int64 = -1
 	if limits.Bounded() {
 		n, ok := domain.DerivableLength(r)
-		if !ok {
-			return nil, fmt.Errorf("%w: a ciphertext ceiling of %d bytes is configured, so %T must declare its length",
-				domain.ErrUnknownLength, limits.MaxCiphertext, r)
+		if !ok || n < 0 {
+			return nil, fmt.Errorf("%w: a size ceiling is configured, so %T must declare a non-negative length",
+				domain.ErrUnknownLength, r)
 		}
 		if err := limits.CheckCiphertext(n); err != nil {
 			return nil, err
+		}
+		// The ciphertext length declares the plaintext length for a compact
+		// record. Check both ceilings before allocating for the read; a caller
+		// that opted out of MaxCiphertext must not thereby lose MaxPlaintext.
+		if n >= domain.CompactOverhead {
+			if err := limits.CheckPlaintext(n - domain.CompactOverhead); err != nil {
+				return nil, err
+			}
 		}
 		declared = n
 	}
@@ -369,6 +377,16 @@ func readAll(r io.Reader, declared int64) ([]byte, error) {
 	buf := make([]byte, declared)
 	if _, err := io.ReadFull(r, buf); err != nil {
 		return nil, fmt.Errorf("seal: read record: %w", err)
+	}
+	// A declared length is a claim about one record, not a prefix size. If
+	// more bytes follow, the declared record is not the whole input; accepting
+	// it would authenticate a prefix and silently ignore the rest.
+	extra, err := io.ReadAll(io.LimitReader(r, 1))
+	if err != nil {
+		return nil, fmt.Errorf("seal: read record: %w", err)
+	}
+	if len(extra) != 0 {
+		return nil, domain.ErrCorrupt
 	}
 	return buf, nil
 }

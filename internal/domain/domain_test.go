@@ -333,6 +333,25 @@ func TestDerivableLength(t *testing.T) {
 		}
 	})
 
+	t.Run("a file positioned past EOF cannot report a negative length", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "payload")
+		if err := os.WriteFile(path, payload, 0o600); err != nil {
+			t.Fatalf("WriteFile: %v", err)
+		}
+		f, err := os.Open(path) //nolint:gosec // a path this test just wrote inside t.TempDir()
+		if err != nil {
+			t.Fatalf("Open: %v", err)
+		}
+		defer f.Close() //nolint:errcheck // read-only handle in a test
+		if _, err := f.Seek(100, io.SeekStart); err != nil {
+			t.Fatalf("Seek: %v", err)
+		}
+
+		if n, ok := domain.DerivableLength(f); ok {
+			t.Fatalf("a file positioned past EOF reported a length of %d; a ceiling must fail closed on it", n)
+		}
+	})
+
 	t.Run("a bare Seeker, left where it was found", func(t *testing.T) {
 		s := &seekerOnly{data: payload}
 		if _, err := s.Read(make([]byte, 3)); err != nil {
