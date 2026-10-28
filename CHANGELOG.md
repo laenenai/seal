@@ -20,6 +20,14 @@ format or the importable Go API.
   declared ciphertext length before allocating or reading, and rejects trailing
   bytes after the declared record. No API change.
 
+### Security process
+
+- Enabled GitHub private vulnerability reporting and documented supported
+  versions, response targets (3 business days to acknowledge, 7 to triage, 90
+  to coordinate disclosure), the security model, consumer obligations, and the
+  remaining external-review gate.
+- Added Dependabot updates for Go modules and GitHub Actions.
+
 ### Tooling
 
 - **Removed the `api.txt` golden-file pattern.** `api.txt`, `api_test.go`,
