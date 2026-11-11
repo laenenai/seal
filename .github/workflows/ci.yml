@@ -28,7 +28,7 @@ jobs:
       # mise.toml is the single source of tool versions. This installs Go,
       # gofumpt and golangci-lint, then runs the same gate a developer runs
       # locally. apidiff, gorelease and govulncheck are pinned by their tasks.
-      - uses: jdx/mise-action@c37c93293d6b742fc901e1406b8f764f6fb19dac # v2.4.4
+      - uses: jdx/mise-action@b44d12e7d0d8ee7461bb893e1b1993500433185b # v5.2.7
         with:
           install: true
           cache: true
